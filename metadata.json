@@ -1,0 +1,6 @@
+{
+  "name": "Word Candy",
+  "description": "Colorful 1000+ level EN/FR word search puzzle game with candy worlds, daily rewards, hints, and collections.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
