@@ -4,8 +4,11 @@ import com.example.model.GeneratedBoard
 import com.example.model.GridCoord
 import com.example.model.LevelData
 import com.example.model.WordPlacement
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.max
+import kotlin.math.roundToInt
 import kotlin.math.sign
 import kotlin.random.Random
 
@@ -95,6 +98,114 @@ object WordGridGenerator {
             row.map { random.nextInt(paletteSize) }
         }
         return board.copy(letters = newLetters, colorIndices = newColors)
+    }
+
+    /**
+     * Picks the grid coordinate whose rendered tile center is closest to (xPx, yPx).
+     * Accounting for cell spacing and clamping to [0, gridSize - 1] ensures even
+     * touches on gaps or the outer frame padding select the nearest edge letter accurately.
+     */
+    fun findClosestCoord(
+        xPx: Float,
+        yPx: Float,
+        areaWidthPx: Float,
+        areaHeightPx: Float,
+        spacingPx: Float,
+        gridSize: Int
+    ): GridCoord? {
+        if (areaWidthPx <= 0f || areaHeightPx <= 0f || gridSize <= 0) return null
+        val totalSpacing = spacingPx * (gridSize - 1).coerceAtLeast(0)
+        val tileW = ((areaWidthPx - totalSpacing) / gridSize.toFloat()).coerceAtLeast(1f)
+        val tileH = ((areaHeightPx - totalSpacing) / gridSize.toFloat()).coerceAtLeast(1f)
+        val pitchX = tileW + spacingPx
+        val pitchY = tileH + spacingPx
+
+        var bestCol = 0
+        var bestDistX = Float.MAX_VALUE
+        for (c in 0 until gridSize) {
+            val centerX = tileW * 0.5f + c * pitchX
+            val dist = abs(xPx - centerX)
+            if (dist < bestDistX) {
+                bestDistX = dist
+                bestCol = c
+            }
+        }
+
+        var bestRow = 0
+        var bestDistY = Float.MAX_VALUE
+        for (r in 0 until gridSize) {
+            val centerY = tileH * 0.5f + r * pitchY
+            val dist = abs(yPx - centerY)
+            if (dist < bestDistY) {
+                bestDistY = dist
+                bestRow = r
+            }
+        }
+
+        return GridCoord(bestRow, bestCol)
+    }
+
+    /**
+     * Snaps a drag vector from the anchor cell's exact center to the pointer's current
+     * pixel position along the closest of the 8 compass axes, eliminating diagonal wobble
+     * caused by pre-rounding pointer coordinates before angle snapping.
+     */
+    fun computeSnappedLineFromPointer(
+        anchor: GridCoord,
+        pointerXPx: Float,
+        pointerYPx: Float,
+        areaWidthPx: Float,
+        areaHeightPx: Float,
+        spacingPx: Float,
+        gridSize: Int
+    ): List<GridCoord> {
+        if (areaWidthPx <= 0f || areaHeightPx <= 0f || gridSize <= 0) return listOf(anchor)
+        val totalSpacing = spacingPx * (gridSize - 1).coerceAtLeast(0)
+        val tileW = ((areaWidthPx - totalSpacing) / gridSize.toFloat()).coerceAtLeast(1f)
+        val tileH = ((areaHeightPx - totalSpacing) / gridSize.toFloat()).coerceAtLeast(1f)
+        val pitchX = tileW + spacingPx
+        val pitchY = tileH + spacingPx
+
+        val anchorCx = tileW * 0.5f + anchor.col * pitchX
+        val anchorCy = tileH * 0.5f + anchor.row * pitchY
+        val dxPx = pointerXPx - anchorCx
+        val dyPx = pointerYPx - anchorCy
+
+        val closest = findClosestCoord(pointerXPx, pointerYPx, areaWidthPx, areaHeightPx, spacingPx, gridSize)
+        if (closest == null || closest == anchor) return listOf(anchor)
+
+        val angle = atan2(dyPx.toDouble(), dxPx.toDouble())
+        val octant = ((angle / (PI / 4.0)).roundToInt() % 8 + 8) % 8
+        val (stepR, stepC) = when (octant) {
+            0 -> 0 to 1
+            1 -> 1 to 1
+            2 -> 1 to 0
+            3 -> 1 to -1
+            4 -> 0 to -1
+            5 -> -1 to -1
+            6 -> -1 to 0
+            else -> -1 to 1
+        }
+
+        val unitStepX = stepC * pitchX
+        val unitStepY = stepR * pitchY
+        val denom = unitStepX * unitStepX + unitStepY * unitStepY
+        if (denom <= 0f) return listOf(anchor)
+
+        val steps = ((dxPx * unitStepX + dyPx * unitStepY) / denom).roundToInt().coerceAtLeast(0)
+        if (steps == 0) return listOf(anchor)
+
+        val coords = ArrayList<GridCoord>(steps + 1)
+        for (i in 0..steps) {
+            val r = anchor.row + i * stepR
+            val c = anchor.col + i * stepC
+            if (r in 0 until gridSize && c in 0 until gridSize) {
+                coords.add(GridCoord(r, c))
+            } else {
+                break
+            }
+        }
+        return coords
     }
 
     fun computeLineCoords(start: GridCoord, end: GridCoord, gridSize: Int): List<GridCoord> {

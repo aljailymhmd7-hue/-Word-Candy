@@ -72,6 +72,18 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        UnityAdsManager.onActivityResumed(this)
+    }
+
+    override fun onDestroy() {
+        if (isFinishing) {
+            UnityAdsManager.releaseBanner(this)
+        }
+        super.onDestroy()
+    }
 }
 
 @Composable
@@ -265,10 +277,7 @@ fun WordSplashApp(
                     Modifier
                 }
             ) {
-                UnityBannerAdBar(
-                    isInitialized = adsStatus.isInitialized,
-                    reloadKey = currentRoute
-                )
+                UnityBannerAdBar(adsStatus = adsStatus)
             }
 
             if (currentRoute != ROUTE_GAMEPLAY) {

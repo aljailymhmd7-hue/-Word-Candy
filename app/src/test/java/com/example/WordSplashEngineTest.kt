@@ -1,13 +1,16 @@
 package com.example
 
 import android.content.Context
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.core.app.ApplicationProvider
+import com.example.ads.UnityAdsManager
 import com.example.ads.UnityAdsStatus
 import com.example.audio.SoundEffect
 import com.example.audio.SoundEffects
@@ -311,5 +314,121 @@ class WordSplashEngineTest {
         composeRule.onNodeWithTag("word_search_grid").assertIsDisplayed()
         composeRule.onNodeWithTag("grid_particle_canvas").assertExists()
         composeRule.onNodeWithTag("confetti_canvas").assertExists()
+    }
+
+    @Test
+    fun `closest coord and pointer angle snapping accurately track finger position`() {
+        // 6x6 grid in 625px square with 5px spacing => tile = (625 - 25)/6 = 100px, pitch = 105px
+        // Center of (0,0) = (50, 50), center of (5,5) = (575, 575)
+        val topLeftEdge = WordGridGenerator.findClosestCoord(
+            xPx = -8f,
+            yPx = -6f,
+            areaWidthPx = 625f,
+            areaHeightPx = 625f,
+            spacingPx = 5f,
+            gridSize = 6
+        )
+        assertEquals(GridCoord(0, 0), topLeftEdge)
+
+        // Touching just right of the gap between col 1 (center 155) and col 2 (center 260) => gap midpoint 207.5
+        val nearCol2 = WordGridGenerator.findClosestCoord(
+            xPx = 212f,
+            yPx = 155f,
+            areaWidthPx = 625f,
+            areaHeightPx = 625f,
+            spacingPx = 5f,
+            gridSize = 6
+        )
+        assertEquals(GridCoord(1, 2), nearCol2)
+
+        // Dragging vertically from (1,1) [center (155, 155)] down 2 rows with slight horizontal drift (+45px, +210px)
+        // Must stay strictly vertical [(1,1), (2,1), (3,1)] rather than jumping diagonally!
+        val verticalSnapped = WordGridGenerator.computeSnappedLineFromPointer(
+            anchor = GridCoord(1, 1),
+            pointerXPx = 200f,
+            pointerYPx = 365f,
+            areaWidthPx = 625f,
+            areaHeightPx = 625f,
+            spacingPx = 5f,
+            gridSize = 6
+        )
+        assertEquals(listOf(GridCoord(1, 1), GridCoord(2, 1), GridCoord(3, 1)), verticalSnapped)
+    }
+
+    @Test
+    fun `grid drag threshold ignores accidental micro taps and triggers on real drag`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = LevelRepository(context)
+        val level1 = runBlocking { repo.getLevel(AppLanguage.EN, 1) }
+
+        val engine = WordSplashGameEngine()
+        engine.startLevel(level1, previouslyUnlockedLevel = 1)
+        val gameplayState = GameplayUiState(
+            levelData = engine.state.levelData,
+            board = engine.state.board,
+            isLoading = false
+        )
+
+        var dragStarts = 0
+        var dragEnds = 0
+
+        composeRule.setContent {
+            WordSplashTheme {
+                GameplayScreen(
+                    progress = GameProgress(language = AppLanguage.EN),
+                    gameplay = gameplayState,
+                    onDragStart = { dragStarts++ },
+                    onDragMove = {},
+                    onDragEnd = { dragEnds++ },
+                    onUseHint = {},
+                    onUseWordHint = {},
+                    onShuffle = {},
+                    onToggleLanguage = {},
+                    onNavigateHome = {},
+                    onNavigateLevels = {},
+                    onNavigateSettings = {}
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+
+        // Tiny accidental tap/jitter (< 8dp) should NOT trigger drag selection
+        composeRule.onNodeWithTag("word_search_grid").performTouchInput {
+            down(center)
+            moveBy(Offset(2f, 2f))
+            up()
+        }
+        composeRule.waitForIdle()
+        assertEquals(0, dragStarts)
+        assertEquals(0, dragEnds)
+
+        // Real drag (> 8dp) MUST trigger dragStart and dragEnd
+        composeRule.onNodeWithTag("word_search_grid").performTouchInput {
+            down(center)
+            moveBy(Offset(80f, 0f))
+            up()
+        }
+        composeRule.waitForIdle()
+        assertEquals(1, dragStarts)
+        assertEquals(1, dragEnds)
+    }
+
+    @Test
+    fun `unity ads automatically prepares next rewarded ad after reward is earned`() {
+        var rewardCount = 0
+        var skippedCount = 0
+        var reloadCount = 0
+
+        UnityAdsManager.handleRewardedShowComplete(
+            completed = true,
+            onRewardEarned = { rewardCount++ },
+            onUnavailableOrSkipped = { skippedCount++ },
+            reloadNextAd = { reloadCount++ }
+        )
+
+        assertEquals(1, rewardCount)
+        assertEquals(0, skippedCount)
+        assertEquals(1, reloadCount)
     }
 }

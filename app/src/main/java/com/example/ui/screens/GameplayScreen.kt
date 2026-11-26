@@ -12,7 +12,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -81,6 +82,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -592,10 +594,18 @@ private fun WordSearchGrid(
     onDragEnd: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
     val gridSize = board.gridSize
     val themeStyle = remember(boardTheme) { boardTheme.style() }
     val themePalette = themeStyle.tilePalette
     val tileRadius = if (gridSize <= 8) themeStyle.tileCornerRadiusDp.dp else (themeStyle.tileCornerRadiusDp - 3).coerceAtLeast(4).dp
+
+    val cellSpacing = if (gridSize <= 6) 5.dp else if (gridSize <= 8) 4.dp else 2.5.dp
+    val outerTouchMargin = 6.dp
+    val framePadding = 8.dp
+    val totalEdgeInsetPx = with(density) { (outerTouchMargin + framePadding).toPx() }
+    val cellSpacingPx = with(density) { cellSpacing.toPx() }
+    val dragThresholdPx = with(density) { 8.dp.toPx() }
 
     val infiniteTransition = rememberInfiniteTransition(label = "hint_glow")
     val hintAlpha by infiniteTransition.animateFloat(
@@ -608,62 +618,86 @@ private fun WordSearchGrid(
         label = "hint_pulse"
     )
 
-    BoxWithConstraints(
+    // Expanded outer touch container makes edge letters significantly easier to hit
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .aspectRatio(1f)
-            .shadow(12.dp, RoundedCornerShape(24.dp))
-            .clip(RoundedCornerShape(24.dp))
-            .background(themeStyle.boardFrameColor)
-            .border(3.dp, themeStyle.boardBorderColor, RoundedCornerShape(24.dp))
-            .padding(8.dp)
-            .testTag("word_search_grid")
-    ) {
-        fun offsetToCoord(pos: Offset, widthPx: Float, heightPx: Float): GridCoord? {
-            if (widthPx <= 0f || heightPx <= 0f) return null
-            val cellW = widthPx / gridSize.toFloat()
-            val cellH = heightPx / gridSize.toFloat()
-            val col = (pos.x / cellW).toInt().coerceIn(0, gridSize - 1)
-            val row = (pos.y / cellH).toInt().coerceIn(0, gridSize - 1)
-            return GridCoord(row, col)
-        }
+            .pointerInput(board, hapticsEnabled, gridSize, totalEdgeInsetPx, cellSpacingPx, dragThresholdPx) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val innerW = (size.width.toFloat() - totalEdgeInsetPx * 2f).coerceAtLeast(1f)
+                    val innerH = (size.height.toFloat() - totalEdgeInsetPx * 2f).coerceAtLeast(1f)
+                    val anchorCoord = WordGridGenerator.findClosestCoord(
+                        xPx = down.position.x - totalEdgeInsetPx,
+                        yPx = down.position.y - totalEdgeInsetPx,
+                        areaWidthPx = innerW,
+                        areaHeightPx = innerH,
+                        spacingPx = cellSpacingPx,
+                        gridSize = gridSize
+                    ) ?: return@awaitEachGesture
 
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(board) {
-                    detectDragGestures(
-                        onDragStart = { offset ->
-                            val start = offsetToCoord(offset, size.width.toFloat(), size.height.toFloat())
-                            if (start != null) {
-                                if (hapticsEnabled) {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                }
-                                onDragStart(start)
+                    var dragStarted = false
+                    var lastEndCoord = anchorCoord
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id }
+                        if (change == null || !change.pressed) {
+                            if (dragStarted) {
+                                onDragEnd()
                             }
-                        },
-                        onDrag = { change, _ ->
-                            change.consume()
-                            val current = offsetToCoord(change.position, size.width.toFloat(), size.height.toFloat())
-                                ?: return@detectDragGestures
-                            onDragMove(current)
-                        },
-                        onDragEnd = {
-                            onDragEnd()
-                        },
-                        onDragCancel = {
-                            onDragEnd()
+                            break
                         }
-                    )
+
+                        val distFromDown = (change.position - down.position).getDistance()
+                        if (!dragStarted && distFromDown >= dragThresholdPx) {
+                            dragStarted = true
+                            if (hapticsEnabled) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                            onDragStart(anchorCoord)
+                        }
+
+                        if (dragStarted) {
+                            change.consume()
+                            val snappedLine = WordGridGenerator.computeSnappedLineFromPointer(
+                                anchor = anchorCoord,
+                                pointerXPx = change.position.x - totalEdgeInsetPx,
+                                pointerYPx = change.position.y - totalEdgeInsetPx,
+                                areaWidthPx = innerW,
+                                areaHeightPx = innerH,
+                                spacingPx = cellSpacingPx,
+                                gridSize = gridSize
+                            )
+                            val newEnd = snappedLine.lastOrNull() ?: anchorCoord
+                            if (newEnd != lastEndCoord) {
+                                lastEndCoord = newEnd
+                                onDragMove(newEnd)
+                            }
+                        }
+                    }
                 }
-        ) {
-            val cellSpacing = if (gridSize <= 6) 5.dp else if (gridSize <= 8) 4.dp else 2.5.dp
-            val fontSize = when {
-                gridSize <= 6 -> 22.sp
-                gridSize <= 8 -> 17.sp
-                gridSize <= 10 -> 14.sp
-                else -> 11.5.sp
             }
+            .padding(outerTouchMargin)
+    ) {
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .shadow(12.dp, RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(24.dp))
+                .background(themeStyle.boardFrameColor)
+                .border(3.dp, themeStyle.boardBorderColor, RoundedCornerShape(24.dp))
+                .padding(framePadding)
+                .testTag("word_search_grid")
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                val fontSize = when {
+                    gridSize <= 6 -> 22.sp
+                    gridSize <= 8 -> 17.sp
+                    gridSize <= 10 -> 14.sp
+                    else -> 11.5.sp
+                }
 
             Column(
                 modifier = Modifier.fillMaxSize(),
@@ -785,6 +819,7 @@ private fun WordSearchGrid(
                 themePalette = themePalette,
                 modifier = Modifier.fillMaxSize()
             )
+        }
         }
     }
 }
