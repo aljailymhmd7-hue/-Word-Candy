@@ -4,7 +4,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      KEYSTORE_PATH: my-upload-key.jks
+      KEYSTORE_PATH: app/my-upload-key.jks
       STORE_PASSWORD: upload123456
       KEY_PASSWORD: upload123456
     steps:
@@ -15,14 +15,26 @@ jobs:
           distribution: 'temurin'
       - uses: gradle/actions/setup-gradle@v3
       
-      - name: Create files
+      - name: Create files EVERYWHERE
         run: |
           echo '{"project_info":{"project_number":"123","project_id":"dummy"},"client":[{"client_info":{"mobilesdk_app_id":"1:123:android:dummy","android_client_info":{"package_name":"com.elgaily.wordcandy"}},"oauth_client":[],"api_key":[{"current_key":"dummy"}],"services":{}}]}' > app/google-services.json
+          
           rm -rf .gradle build app/build
-          # المفتاح لازم يكون alias = upload ونفس الباسورد الفوق
-          keytool -genkey -v -keystore my-upload-key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload -storepass upload123456 -keypass upload123456 -dname "CN=WordCandy" -noprompt
-          keytool -genkey -v -keystore debug.keystore -keyalg RSA -keysize 2048 -validity 10000 -alias androiddebugkey -storepass android -keypass android -dname "CN=Debug" -noprompt
-          ls -lh *.jks
+          
+          # انشئ المفتاح في كل مكان ممكن يفتش فيه
+          keytool -genkey -v -keystore app/my-upload-key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload -storepass upload123456 -keypass upload123456 -dname "CN=WordCandy" -noprompt
+          cp app/my-upload-key.jks my-upload-key.jks
+          cp app/my-upload-key.jks debug.keystore
+          cp app/my-upload-key.jks app/debug.keystore
+          cp app/my-upload-key.jks app/my-upload-key.jks
+          
+          # انشئ debug.keystore المطلوب
+          keytool -genkey -v -keystore debug.keystore -keyalg RSA -keysize 2048 -validity 10000 -alias androiddebugkey -storepass android -keypass android -dname "CN=Debug" -noprompt || true
+          keytool -genkey -v -keystore app/debug.keystore -keyalg RSA -keysize 2048 -validity 10000 -alias androiddebugkey -storepass android -keypass android -dname "CN=Debug" -noprompt || true
+          
+          ls -lh *.jks app/*.jks app/*.keystore *.keystore
+          echo "KEYSTORE_PATH=$KEYSTORE_PATH"
+          echo "STORE_PASSWORD=$STORE_PASSWORD"
       
       - name: Build AAB
         run: gradle bundleRelease --no-configuration-cache --stacktrace
