@@ -21,7 +21,7 @@ jobs:
           cp app/my-upload-key.jks app/app/my-upload-key.jks
           cp app/my-upload-key.jks my-upload-key.jks
 
-      - name: build aab
+      - name: build apk
         env:
           KEYSTORE_PATH: my-upload-key.jks
           STORE_PASSWORD: upload123456
@@ -29,12 +29,12 @@ jobs:
         run: |
           if [ -f "./gradlew" ]; then
             chmod +x gradlew
-            ./gradlew bundleRelease --no-configuration-cache
+            ./gradlew assembleRelease --no-configuration-cache
           else
-            gradle bundleRelease --no-configuration-cache
+            gradle assembleRelease --no-configuration-cache
           fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: WordCandy-AAB
-          path: app/build/outputs/bundle/release/*.aab
+          name: WordCandy-APK
+          path: app/build/outputs/apk/release/*.apk
