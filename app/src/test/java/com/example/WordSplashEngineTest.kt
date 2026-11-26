@@ -1,7 +1,12 @@
 package com.example
 
 import android.content.Context
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -9,6 +14,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.test.core.app.ApplicationProvider
 import com.example.ads.UnityAdsManager
 import com.example.ads.UnityAdsStatus
@@ -473,5 +479,203 @@ class WordSplashEngineTest {
         haptics.playWordFound()
         haptics.playLevelComplete()
         haptics.playWrongGuess()
+    }
+
+    @Test
+    fun `level 4 vertical swipe on last column selects YELLOW top to bottom even in RTL`() {
+        val yellowCoords = (0..5).map { GridCoord(it, 5) }
+        val letters = listOf(
+            listOf('I', 'N', 'D', 'I', 'G', 'Y'),
+            listOf('A', 'B', 'C', 'D', 'F', 'E'),
+            listOf('P', 'I', 'N', 'K', 'G', 'L'),
+            listOf('H', 'M', 'Q', 'R', 'S', 'L'),
+            listOf('T', 'U', 'V', 'X', 'Z', 'O'),
+            listOf('J', 'K', 'M', 'N', 'P', 'W')
+        )
+        val board = com.example.model.GeneratedBoard(
+            gridSize = 6,
+            letters = letters,
+            colorIndices = List(6) { r -> List(6) { c -> (r + c) % 7 } },
+            placements = listOf(
+                com.example.model.WordPlacement("INDIGO", (0..5).map { GridCoord(0, it) }, 0),
+                com.example.model.WordPlacement("PINK", (0..3).map { GridCoord(2, it) }, 1),
+                com.example.model.WordPlacement("YELLOW", yellowCoords, 2)
+            )
+        )
+        val level4 = com.example.model.LevelData(
+            level = 4,
+            theme = "Colors",
+            words = listOf("INDIGO", "PINK", "YELLOW"),
+            gridSize = 6,
+            world = "CANDY MEADOW",
+            difficulty = "Easy",
+            colorsHex = listOf("#B46EFF", "#FF8E4B", "#4BFFEA")
+        )
+
+        val engine = WordSplashGameEngine()
+        // Initialize engine with deterministic Level 4 board then drive via WordSearchGrid
+        engine.startLevel(level4, previouslyUnlockedLevel = 4)
+        var uiState by mutableStateOf(
+            GameplayUiState(
+                levelData = level4,
+                board = board,
+                isLoading = false
+            )
+        )
+        val liveSnapshots = mutableListOf<List<GridCoord>>()
+        var anchor: GridCoord? = null
+        var matchedText: String? = null
+
+        composeRule.setContent {
+            WordSplashTheme {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    GameplayScreen(
+                        progress = GameProgress(language = AppLanguage.EN),
+                        gameplay = uiState,
+                        onDragStart = { start ->
+                            anchor = start
+                            val coords = listOf(start)
+                            liveSnapshots.add(coords)
+                            uiState = uiState.copy(selectedCoords = coords)
+                        },
+                        onDragMove = { end ->
+                            val start = anchor ?: return@GameplayScreen
+                            val coords = WordGridGenerator.computeLineCoords(start, end, 6)
+                            liveSnapshots.add(coords)
+                            uiState = uiState.copy(selectedCoords = coords)
+                        },
+                        onDragEnd = {
+                            matchedText = uiState.selectedCoords.joinToString("") {
+                                board.letters[it.row][it.col].toString()
+                            }
+                            uiState = uiState.copy(selectedCoords = emptyList())
+                        },
+                        onUseHint = {},
+                        onUseWordHint = {},
+                        onShuffle = {},
+                        onToggleLanguage = {},
+                        onNavigateHome = {},
+                        onNavigateLevels = {},
+                        onNavigateSettings = {}
+                    )
+                }
+            }
+        }
+
+        composeRule.waitForIdle()
+
+        // Swipe vertically down last column (col = 5, row 0 -> row 5)
+        composeRule.onNodeWithTag("word_search_grid").performTouchInput {
+            val cellW = width / 6f
+            val cellH = height / 6f
+            val col5X = cellW * 5.5f
+            down(Offset(col5X, cellH * 0.5f))
+            for (r in 1..5) {
+                moveTo(Offset(col5X, cellH * (r + 0.5f)))
+            }
+            up()
+        }
+        composeRule.waitForIdle()
+
+        assertEquals("YELLOW", matchedText)
+        assertTrue(liveSnapshots.contains(yellowCoords))
+        assertTrue(liveSnapshots.all { line -> line.all { it.col == 5 } })
+    }
+
+    @Test
+    fun `word search grid accurately selects all 8 compass directions on 6x6 board`() {
+        val board = com.example.model.GeneratedBoard(
+            gridSize = 6,
+            letters = List(6) { List(6) { 'A' } },
+            colorIndices = List(6) { r -> List(6) { c -> (r + c) % 7 } },
+            placements = emptyList()
+        )
+        val levelData = com.example.model.LevelData(
+            level = 4,
+            theme = "Colors",
+            words = listOf("INDIGO", "PINK", "YELLOW"),
+            gridSize = 6,
+            world = "CANDY MEADOW",
+            difficulty = "Easy",
+            colorsHex = emptyList()
+        )
+
+        var lastSelectedLine: List<GridCoord> = emptyList()
+        var anchor: GridCoord? = null
+        var uiState by mutableStateOf(
+            GameplayUiState(levelData = levelData, board = board, isLoading = false)
+        )
+
+        composeRule.setContent {
+            WordSplashTheme {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    GameplayScreen(
+                        progress = GameProgress(language = AppLanguage.EN),
+                        gameplay = uiState,
+                        onDragStart = { start ->
+                            anchor = start
+                            val line = listOf(start)
+                            lastSelectedLine = line
+                            uiState = uiState.copy(selectedCoords = line)
+                        },
+                        onDragMove = { end ->
+                            val start = anchor ?: return@GameplayScreen
+                            val line = WordGridGenerator.computeLineCoords(start, end, 6)
+                            lastSelectedLine = line
+                            uiState = uiState.copy(selectedCoords = line)
+                        },
+                        onDragEnd = {
+                            uiState = uiState.copy(selectedCoords = emptyList())
+                        },
+                        onUseHint = {},
+                        onUseWordHint = {},
+                        onShuffle = {},
+                        onToggleLanguage = {},
+                        onNavigateHome = {},
+                        onNavigateLevels = {},
+                        onNavigateSettings = {}
+                    )
+                }
+            }
+        }
+        composeRule.waitForIdle()
+
+        class DirCase(val start: GridCoord, val end: GridCoord, val expected: List<GridCoord>) {
+            override fun toString() = "$start->$end"
+        }
+        val cases = listOf(
+            // Right
+            DirCase(GridCoord(2, 1), GridCoord(2, 4), (1..4).map { GridCoord(2, it) }),
+            // Left
+            DirCase(GridCoord(2, 4), GridCoord(2, 1), (4 downTo 1).map { GridCoord(2, it) }),
+            // Down
+            DirCase(GridCoord(0, 5), GridCoord(5, 5), (0..5).map { GridCoord(it, 5) }),
+            // Up
+            DirCase(GridCoord(5, 5), GridCoord(0, 5), (5 downTo 0).map { GridCoord(it, 5) }),
+            // Down-Right
+            DirCase(GridCoord(1, 1), GridCoord(4, 4), (1..4).map { GridCoord(it, it) }),
+            // Up-Left
+            DirCase(GridCoord(4, 4), GridCoord(1, 1), (4 downTo 1).map { GridCoord(it, it) }),
+            // Down-Left
+            DirCase(GridCoord(1, 4), GridCoord(4, 1), (0..3).map { GridCoord(1 + it, 4 - it) }),
+            // Up-Right
+            DirCase(GridCoord(4, 1), GridCoord(1, 4), (0..3).map { GridCoord(4 - it, 1 + it) })
+        )
+
+        cases.forEach { testCase ->
+            lastSelectedLine = emptyList()
+            composeRule.onNodeWithTag("word_search_grid").performTouchInput {
+                val cellW = width / 6f
+                val cellH = height / 6f
+                val startOffset = Offset((testCase.start.col + 0.5f) * cellW, (testCase.start.row + 0.5f) * cellH)
+                val endOffset = Offset((testCase.end.col + 0.5f) * cellW, (testCase.end.row + 0.5f) * cellH)
+                down(startOffset)
+                moveTo(Offset((startOffset.x + endOffset.x) * 0.5f, (startOffset.y + endOffset.y) * 0.5f))
+                moveTo(endOffset)
+                up()
+            }
+            composeRule.waitForIdle()
+            assertEquals("Direction failed for $testCase", testCase.expected, lastSelectedLine)
+        }
     }
 }

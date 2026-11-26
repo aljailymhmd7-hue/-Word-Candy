@@ -14,6 +14,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -58,6 +59,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -80,14 +82,17 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.audio.LocalHaptics
@@ -241,44 +246,54 @@ fun GameplayScreen(
             RainbowProgressBar(progress = foundCount.toFloat() / totalWords.toFloat(), height = 12.dp)
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Scrollable middle section for chips + grid
-            Column(
+            // Adaptive middle section for chips + grid (fits on compact screens without clipping bottom rows)
+            BoxWithConstraints(
                 modifier = Modifier
                     .weight(1f)
                     .widthIn(max = 540.dp)
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Words to Find Chips
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                val estimatedChipRows = ((levelData.words.size + 2) / 3).coerceIn(1, 3)
+                val reservedChipsHeight = (estimatedChipRows * 38 + 16).dp
+                val gridMaxSide = minOf(maxWidth, (maxHeight - reservedChipsHeight).coerceAtLeast(210.dp))
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    levelData.words.forEach { word ->
-                        val isFound = word in gameplay.foundWords
-                        val isHighlighted = word in gameplay.highlightedWords && !isFound
-                        WordChip(word = word, isFound = isFound, isHighlighted = isHighlighted)
+                    // Words to Find Chips
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        levelData.words.forEach { word ->
+                            val isFound = word in gameplay.foundWords
+                            val isHighlighted = word in gameplay.highlightedWords && !isFound
+                            WordChip(word = word, isFound = isFound, isHighlighted = isHighlighted)
+                        }
                     }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Interactive Candy Letter Grid
+                    WordSearchGrid(
+                        board = board,
+                        boardTheme = progress.activeBoardTheme,
+                        selectedCoords = gameplay.selectedCoords,
+                        foundCellMap = gameplay.foundCellMap,
+                        hintedCoords = gameplay.hintedCoords,
+                        highlightedWordCoords = gameplay.highlightedWordCoords,
+                        lastMatchedBurst = gameplay.lastMatchedBurst,
+                        hapticsEnabled = progress.hapticsEnabled,
+                        onDragStart = onDragStart,
+                        onDragMove = onDragMove,
+                        onDragEnd = onDragEnd,
+                        modifier = Modifier.widthIn(max = gridMaxSide)
+                    )
                 }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Interactive Candy Letter Grid
-                WordSearchGrid(
-                    board = board,
-                    boardTheme = progress.activeBoardTheme,
-                    selectedCoords = gameplay.selectedCoords,
-                    foundCellMap = gameplay.foundCellMap,
-                    hintedCoords = gameplay.hintedCoords,
-                    highlightedWordCoords = gameplay.highlightedWordCoords,
-                    lastMatchedBurst = gameplay.lastMatchedBurst,
-                    hapticsEnabled = progress.hapticsEnabled,
-                    onDragStart = onDragStart,
-                    onDragMove = onDragMove,
-                    onDragEnd = onDragEnd
-                )
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -592,7 +607,8 @@ private fun WordSearchGrid(
     hapticsEnabled: Boolean,
     onDragStart: (GridCoord) -> Unit,
     onDragMove: (GridCoord) -> Unit,
-    onDragEnd: () -> Unit
+    onDragEnd: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
     val customHaptics = LocalHaptics.current
@@ -605,9 +621,7 @@ private fun WordSearchGrid(
     val cellSpacing = if (gridSize <= 6) 5.dp else if (gridSize <= 8) 4.dp else 2.5.dp
     val outerTouchMargin = 6.dp
     val framePadding = 8.dp
-    val totalEdgeInsetPx = with(density) { (outerTouchMargin + framePadding).toPx() }
     val cellSpacingPx = with(density) { cellSpacing.toPx() }
-    val dragThresholdPx = with(density) { 8.dp.toPx() }
 
     val infiniteTransition = rememberInfiniteTransition(label = "hint_glow")
     val hintAlpha by infiniteTransition.animateFloat(
@@ -620,80 +634,92 @@ private fun WordSearchGrid(
         label = "hint_pulse"
     )
 
-    // Expanded outer touch container makes edge letters significantly easier to hit
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .pointerInput(board, hapticsEnabled, gridSize, totalEdgeInsetPx, cellSpacingPx, dragThresholdPx) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val innerW = (size.width.toFloat() - totalEdgeInsetPx * 2f).coerceAtLeast(1f)
-                    val innerH = (size.height.toFloat() - totalEdgeInsetPx * 2f).coerceAtLeast(1f)
-                    val anchorCoord = WordGridGenerator.findClosestCoord(
-                        xPx = down.position.x - totalEdgeInsetPx,
-                        yPx = down.position.y - totalEdgeInsetPx,
-                        areaWidthPx = innerW,
-                        areaHeightPx = innerH,
-                        spacingPx = cellSpacingPx,
-                        gridSize = gridSize
-                    ) ?: return@awaitEachGesture
-
-                    var dragStarted = false
-                    var lastEndCoord = anchorCoord
-
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id }
-                        if (change == null || !change.pressed) {
-                            if (dragStarted) {
-                                onDragEnd()
-                            }
-                            break
-                        }
-
-                        val distFromDown = (change.position - down.position).getDistance()
-                        if (!dragStarted && distFromDown >= dragThresholdPx) {
-                            dragStarted = true
-                            if (hapticsEnabled && customHaptics == null) {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            }
-                            onDragStart(anchorCoord)
-                        }
-
-                        if (dragStarted) {
-                            change.consume()
-                            val snappedLine = WordGridGenerator.computeSnappedLineFromPointer(
-                                anchor = anchorCoord,
-                                pointerXPx = change.position.x - totalEdgeInsetPx,
-                                pointerYPx = change.position.y - totalEdgeInsetPx,
-                                areaWidthPx = innerW,
-                                areaHeightPx = innerH,
-                                spacingPx = cellSpacingPx,
-                                gridSize = gridSize
-                            )
-                            val newEnd = snappedLine.lastOrNull() ?: anchorCoord
-                            if (newEnd != lastEndCoord) {
-                                lastEndCoord = newEnd
-                                onDragMove(newEnd)
-                            }
-                        }
-                    }
-                }
-            }
-            .padding(outerTouchMargin)
-    ) {
-        BoxWithConstraints(
-            modifier = Modifier
+    // Always force LTR inside the word search grid so visual columns 0..gridSize-1
+    // match local touch (x, y) and Canvas coordinates identically even in RTL locales.
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Box(
+            modifier = modifier
                 .fillMaxWidth()
-                .aspectRatio(1f)
-                .shadow(12.dp, RoundedCornerShape(24.dp))
-                .clip(RoundedCornerShape(24.dp))
-                .background(themeStyle.boardFrameColor)
-                .border(3.dp, themeStyle.boardBorderColor, RoundedCornerShape(24.dp))
-                .padding(framePadding)
-                .testTag("word_search_grid")
+                .padding(outerTouchMargin)
         ) {
-            Box(modifier = Modifier.fillMaxSize()) {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .shadow(12.dp, RoundedCornerShape(24.dp))
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(themeStyle.boardFrameColor)
+                    .border(3.dp, themeStyle.boardBorderColor, RoundedCornerShape(24.dp))
+                    .padding(framePadding)
+            ) {
+                var initialDownPosition by remember(board) { mutableStateOf<Offset?>(null) }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("word_search_grid")
+                        .pointerInput(board, gridSize) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(
+                                    requireUnconsumed = false,
+                                    pass = PointerEventPass.Initial
+                                )
+                                initialDownPosition = down.position
+                            }
+                        }
+                        .pointerInput(board, hapticsEnabled, gridSize) {
+                            var anchorCoord: GridCoord? = null
+                            var lastEndCoord: GridCoord? = null
+
+                            detectDragGestures(
+                                onDragStart = { startOffset ->
+                                    val cellWidth = (size.width.toFloat() / gridSize.toFloat()).coerceAtLeast(1f)
+                                    val cellHeight = (size.height.toFloat() / gridSize.toFloat()).coerceAtLeast(1f)
+                                    val origin = initialDownPosition ?: startOffset
+                                    val col = (origin.x / cellWidth).toInt().coerceIn(0, gridSize - 1)
+                                    val row = (origin.y / cellHeight).toInt().coerceIn(0, gridSize - 1)
+                                    val startCoord = GridCoord(row = row, col = col)
+                                    anchorCoord = startCoord
+                                    lastEndCoord = startCoord
+                                    if (hapticsEnabled && customHaptics == null) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
+                                    onDragStart(startCoord)
+                                },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    val cellWidth = (size.width.toFloat() / gridSize.toFloat()).coerceAtLeast(1f)
+                                    val cellHeight = (size.height.toFloat() / gridSize.toFloat()).coerceAtLeast(1f)
+                                    val pointerPosition = change.position
+                                    val x = pointerPosition.x
+                                    val y = pointerPosition.y
+                                    val col = (x / cellWidth).toInt().coerceIn(0, gridSize - 1)
+                                    val row = (y / cellHeight).toInt().coerceIn(0, gridSize - 1)
+                                    val currentCoord = GridCoord(row = row, col = col)
+                                    if (anchorCoord == null) {
+                                        anchorCoord = currentCoord
+                                        lastEndCoord = currentCoord
+                                        onDragStart(currentCoord)
+                                    } else if (currentCoord != lastEndCoord) {
+                                        lastEndCoord = currentCoord
+                                        onDragMove(currentCoord)
+                                    }
+                                },
+                                onDragEnd = {
+                                    initialDownPosition = null
+                                    anchorCoord = null
+                                    lastEndCoord = null
+                                    onDragEnd()
+                                },
+                                onDragCancel = {
+                                    initialDownPosition = null
+                                    anchorCoord = null
+                                    lastEndCoord = null
+                                    onDragEnd()
+                                }
+                            )
+                        }
+                ) {
                 val fontSize = when {
                     gridSize <= 6 -> 22.sp
                     gridSize <= 8 -> 17.sp
@@ -798,17 +824,20 @@ private fun WordSearchGrid(
             // Connecting drag line overlay
             if (selectedCoords.size >= 2) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val stepW = size.width / gridSize.toFloat()
-                    val stepH = size.height / gridSize.toFloat()
+                    val totalSpacing = cellSpacingPx * (gridSize - 1).coerceAtLeast(0)
+                    val tileW = (size.width - totalSpacing) / gridSize.toFloat()
+                    val tileH = (size.height - totalSpacing) / gridSize.toFloat()
+                    val pitchX = tileW + cellSpacingPx
+                    val pitchY = tileH + cellSpacingPx
                     val first = selectedCoords.first()
                     val last = selectedCoords.last()
-                    val startPt = Offset((first.col + 0.5f) * stepW, (first.row + 0.5f) * stepH)
-                    val endPt = Offset((last.col + 0.5f) * stepW, (last.row + 0.5f) * stepH)
+                    val startPt = Offset(tileW * 0.5f + first.col * pitchX, tileH * 0.5f + first.row * pitchY)
+                    val endPt = Offset(tileW * 0.5f + last.col * pitchX, tileH * 0.5f + last.row * pitchY)
                     drawLine(
                         color = CandyYellow.copy(alpha = 0.48f),
                         start = startPt,
                         end = endPt,
-                        strokeWidth = stepW * 0.42f,
+                        strokeWidth = tileW * 0.42f,
                         cap = StrokeCap.Round
                     )
                 }
@@ -817,10 +846,12 @@ private fun WordSearchGrid(
             // Per-cell radial particle burst + shockwave flash over matched word tiles
             GridWordParticleOverlay(
                 gridSize = gridSize,
+                cellSpacingPx = cellSpacingPx,
                 burst = lastMatchedBurst,
                 themePalette = themePalette,
                 modifier = Modifier.fillMaxSize()
             )
+        }
         }
         }
     }
@@ -866,6 +897,7 @@ private class GridSweepBeam(
 @Composable
 private fun GridWordParticleOverlay(
     gridSize: Int,
+    cellSpacingPx: Float,
     burst: WordMatchBurst?,
     themePalette: List<Color>,
     modifier: Modifier = Modifier
@@ -885,9 +917,12 @@ private fun GridWordParticleOverlay(
         if (canvasSize.width <= 0 || canvasSize.height <= 0) return@LaunchedEffect
 
         lastSpawnedBurstId = currentBurst.id
-        val stepW = canvasSize.width.toFloat() / gridSize.toFloat()
-        val stepH = canvasSize.height.toFloat() / gridSize.toFloat()
-        val cellMin = minOf(stepW, stepH)
+        val totalSpacing = cellSpacingPx * (gridSize - 1).coerceAtLeast(0)
+        val tileW = (canvasSize.width.toFloat() - totalSpacing) / gridSize.toFloat()
+        val tileH = (canvasSize.height.toFloat() - totalSpacing) / gridSize.toFloat()
+        val pitchX = tileW + cellSpacingPx
+        val pitchY = tileH + cellSpacingPx
+        val cellMin = minOf(tileW, tileH)
         val rnd = Random(currentBurst.id * 977 + currentBurst.word.hashCode())
         val sparkColors = (themePalette + RainbowColors + listOf(Color.White, CandyGold)).distinct()
 
@@ -896,8 +931,8 @@ private fun GridWordParticleOverlay(
             val last = currentBurst.coords.last()
             beams.add(
                 GridSweepBeam(
-                    start = Offset((first.col + 0.5f) * stepW, (first.row + 0.5f) * stepH),
-                    end = Offset((last.col + 0.5f) * stepW, (last.row + 0.5f) * stepH),
+                    start = Offset(tileW * 0.5f + first.col * pitchX, tileH * 0.5f + first.row * pitchY),
+                    end = Offset(tileW * 0.5f + last.col * pitchX, tileH * 0.5f + last.row * pitchY),
                     strokeWidth = cellMin * 0.58f
                 )
             )
@@ -905,8 +940,8 @@ private fun GridWordParticleOverlay(
 
         val sparksPerCell = if (currentBurst.coords.size <= 5) 14 else 10
         currentBurst.coords.forEachIndexed { idx, coord ->
-            val cx = (coord.col + 0.5f) * stepW
-            val cy = (coord.row + 0.5f) * stepH
+            val cx = tileW * 0.5f + coord.col * pitchX
+            val cy = tileH * 0.5f + coord.row * pitchY
 
             rings.add(
                 GridWaveRing(
@@ -923,8 +958,8 @@ private fun GridWordParticleOverlay(
                 val speed = cellMin * (1.7f + rnd.nextFloat() * 2.6f)
                 particles.add(
                     GridSparkParticle(
-                        x = cx + (rnd.nextFloat() - 0.5f) * stepW * 0.25f,
-                        y = cy + (rnd.nextFloat() - 0.5f) * stepH * 0.25f,
+                        x = cx + (rnd.nextFloat() - 0.5f) * tileW * 0.25f,
+                        y = cy + (rnd.nextFloat() - 0.5f) * tileH * 0.25f,
                         vx = cos(baseAngle) * speed,
                         vy = sin(baseAngle) * speed - cellMin * 0.4f,
                         rotationDeg = rnd.nextFloat() * 360f,
