@@ -38,7 +38,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.Map
@@ -90,6 +90,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.audio.LocalHaptics
 import com.example.audio.LocalSoundEffects
 import com.example.data.WordGridGenerator
 import com.example.model.AppLanguage
@@ -184,7 +185,7 @@ fun GameplayScreen(
                             .testTag("gameplay_back_home_button")
                     ) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                            imageVector = Icons.Rounded.ArrowBack,
                             contentDescription = "Back",
                             tint = Color.White
                         )
@@ -594,6 +595,7 @@ private fun WordSearchGrid(
     onDragEnd: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
+    val customHaptics = LocalHaptics.current
     val density = LocalDensity.current
     val gridSize = board.gridSize
     val themeStyle = remember(boardTheme) { boardTheme.style() }
@@ -652,7 +654,7 @@ private fun WordSearchGrid(
                         val distFromDown = (change.position - down.position).getDistance()
                         if (!dragStarted && distFromDown >= dragThresholdPx) {
                             dragStarted = true
-                            if (hapticsEnabled) {
+                            if (hapticsEnabled && customHaptics == null) {
                                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             }
                             onDragStart(anchorCoord)

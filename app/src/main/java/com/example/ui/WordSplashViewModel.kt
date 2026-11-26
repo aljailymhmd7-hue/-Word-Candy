@@ -3,6 +3,8 @@ package com.example.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.audio.AndroidHapticsController
+import com.example.audio.HapticsController
 import com.example.audio.SoundEffects
 import com.example.audio.SoundEffectsController
 import com.example.data.LevelRepository
@@ -63,6 +65,7 @@ class WordSplashViewModel(application: Application) : AndroidViewModel(applicati
     private val progressRepository = ProgressRepository(application.applicationContext)
     private val gameEngine = WordSplashGameEngine()
     val soundEffects: SoundEffectsController = SoundEffects()
+    val haptics: HapticsController = AndroidHapticsController(application.applicationContext)
 
     private val _uiState = MutableStateFlow(WordSplashUiState())
     val uiState: StateFlow<WordSplashUiState> = _uiState.asStateFlow()
@@ -77,6 +80,7 @@ class WordSplashViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             progressRepository.progressFlow.collectLatest { progress ->
                 soundEffects.enabled = progress.soundEnabled
+                haptics.enabled = progress.hapticsEnabled
                 val langChanged = loadedLanguage != progress.language
                 _uiState.update { it.copy(progress = progress) }
                 if (langChanged) {
@@ -196,6 +200,7 @@ class WordSplashViewModel(application: Application) : AndroidViewModel(applicati
         gameEngine.onDragStart(coord)
         if (gameEngine.state.selectedCoords.size > prevCount) {
             soundEffects.playPop()
+            haptics.playLetterTick()
         }
         syncEngineState()
     }
@@ -207,6 +212,9 @@ class WordSplashViewModel(application: Application) : AndroidViewModel(applicati
         if (curr != prev) {
             if (curr.size > prev.size) {
                 soundEffects.playPop()
+            }
+            if (curr.isNotEmpty()) {
+                haptics.playLetterTick()
             }
             syncEngineState()
         }
@@ -225,6 +233,7 @@ class WordSplashViewModel(application: Application) : AndroidViewModel(applicati
                 )
                 if (outcome.isLevelComplete) {
                     soundEffects.playWinFanfare()
+                    haptics.playLevelComplete()
                     timerJob?.cancel()
                     completedSinceInterstitial++
                     syncEngineState(confettiIncrement = 1, matchedBurst = burst)
@@ -242,12 +251,14 @@ class WordSplashViewModel(application: Application) : AndroidViewModel(applicati
                     }
                 } else {
                     soundEffects.playDing()
+                    haptics.playWordFound()
                     syncEngineState(confettiIncrement = 1, matchedBurst = burst)
                 }
             }
             SelectionOutcome.NoMatch -> {
                 if (draggedLength >= 2) {
                     soundEffects.playWrongGuess()
+                    haptics.playWrongGuess()
                 }
                 syncEngineState()
             }
@@ -334,6 +345,10 @@ class WordSplashViewModel(application: Application) : AndroidViewModel(applicati
 
     fun setHapticsEnabled(enabled: Boolean) {
         soundEffects.playClick()
+        haptics.enabled = enabled
+        if (enabled) {
+            haptics.playLetterTick()
+        }
         viewModelScope.launch {
             progressRepository.setHapticsEnabled(enabled)
         }

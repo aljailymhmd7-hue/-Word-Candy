@@ -28,14 +28,17 @@ import com.unity3d.ads.IUnityAdsLoadListener
 import com.unity3d.ads.IUnityAdsShowListener
 import com.unity3d.ads.UnityAds
 import com.unity3d.ads.UnityAdsShowOptions
+import com.unity3d.ads.metadata.MediationMetaData
 import com.unity3d.services.banners.BannerErrorInfo
 import com.unity3d.services.banners.BannerView
 import com.unity3d.services.banners.UnityBannerSize
+import com.unity3d.services.core.properties.ClientProperties
 import java.lang.ref.WeakReference
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import org.json.JSONObject
 
 data class UnityAdsStatus(
     val isConfigured: Boolean = true,
@@ -97,8 +100,11 @@ object UnityAdsManager {
             return
         }
 
+        val appContext = context.applicationContext
+        configureNonGmsHttpClient(appContext)
+
         UnityAds.initialize(
-            context.applicationContext,
+            appContext,
             UNITY_GAME_ID,
             TEST_MODE,
             object : IUnityAdsInitializationListener {
@@ -137,6 +143,22 @@ object UnityAdsManager {
                 }
             }
         )
+    }
+
+    internal fun configureNonGmsHttpClient(context: Context) {
+        val appContext = context.applicationContext ?: context
+        if (ClientProperties.getApplicationContext() == null) {
+            ClientProperties.setApplicationContext(appContext)
+        }
+        runCatching {
+            val traits = JSONObject().put("useHttpClient", "OKHTTP3")
+            MediationMetaData(appContext).apply {
+                set("traits", traits)
+                commit()
+            }
+        }.onFailure { error ->
+            Log.w(TAG, "Failed to commit OKHTTP3 trait for Unity Ads", error)
+        }
     }
 
     fun onActivityResumed(activity: Activity) {

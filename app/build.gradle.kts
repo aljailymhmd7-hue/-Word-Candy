@@ -1,21 +1,18 @@
-import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
-
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.secrets)
-  alias(libs.plugins.google.services)
 }
 
 android {
   namespace = "com.example"
-  compileSdk { version = release(36) { minorApiLevel = 1 } }
+  compileSdk = 33
 
   defaultConfig {
     applicationId = "com.elgaily.wordcandy"
     minSdk = 24
-    targetSdk = 36
+    targetSdk = 33
     versionCode = 1
     versionName = "1.0"
 
@@ -66,7 +63,7 @@ android {
   testOptions { unitTests { isIncludeAndroidResources = true } }
   dependenciesInfo {
     includeInApk = false
-    includeInBundle = true
+    includeInBundle = false
   }
 }
 
@@ -78,7 +75,13 @@ secrets {
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
 }
 
-googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
+// Alternative app stores (Amazon Appstore / Uptodown): exclude all Google Play Services
+// and Google Play Billing artifacts so Unity Ads runs cleanly without GMS.
+configurations.configureEach {
+  exclude(group = "com.google.android.gms")
+  exclude(group = "com.android.billingclient")
+  resolutionStrategy.force("androidx.emoji2:emoji2:1.3.0")
+}
 
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
@@ -121,7 +124,9 @@ dependencies {
   // implementation(libs.firebase.appcheck.debug)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
-  implementation(libs.unity.ads)
+  implementation(libs.unity.ads) {
+    exclude(group = "com.google.android.gms")
+  }
   // implementation(libs.logging.interceptor)
   // implementation(libs.moshi.kotlin)
   // implementation(libs.okhttp)

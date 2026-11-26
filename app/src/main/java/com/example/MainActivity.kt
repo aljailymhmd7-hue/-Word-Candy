@@ -4,7 +4,13 @@ import android.app.Activity
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -24,11 +30,16 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -38,6 +49,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.ads.UnityAdsManager
 import com.example.ads.UnityBannerAdBar
+import com.example.audio.LocalHaptics
 import com.example.audio.LocalSoundEffects
 import com.example.model.LocalizedStrings
 import com.example.ui.WordSplashViewModel
@@ -64,7 +76,9 @@ const val ROUTE_SETTINGS = "settings"
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
         UnityAdsManager.initialize(this)
         setContent {
             WordSplashTheme {
@@ -99,6 +113,20 @@ fun WordSplashApp(
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route ?: ROUTE_HOME
 
+    var previousRoute by remember { mutableStateOf<String?>(null) }
+    val lastRouteRef = remember { object { var value: String = currentRoute } }
+    val transitionFromRoute = if (lastRouteRef.value != currentRoute) {
+        lastRouteRef.value
+    } else {
+        previousRoute
+    }
+    SideEffect {
+        if (lastRouteRef.value != currentRoute) {
+            previousRoute = lastRouteRef.value
+            lastRouteRef.value = currentRoute
+        }
+    }
+
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(state.toastMessage) {
         val msg = state.toastMessage
@@ -118,14 +146,21 @@ fun WordSplashApp(
         )
     }
 
-    CompositionLocalProvider(LocalSoundEffects provides viewModel.soundEffects) {
+    CompositionLocalProvider(
+        LocalSoundEffects provides viewModel.soundEffects,
+        LocalHaptics provides viewModel.haptics
+    ) {
     CandyGradientBackground(boardTheme = progress.activeBoardTheme) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.statusBars)
         ) {
-            Box(modifier = Modifier.weight(1f)) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clipToBounds()
+            ) {
                 NavHost(
                     navController = navController,
                     startDestination = ROUTE_HOME,
@@ -145,50 +180,67 @@ fun WordSplashApp(
                         )
                     }
 
-                    composable(ROUTE_LEVEL_MAP) {
-                        LevelMapScreen(
-                            progress = progress,
-                            onSelectLevel = { level ->
-                                viewModel.startLevel(level)
-                                navController.navigate(ROUTE_GAMEPLAY) {
-                                    launchSingleTop = true
-                                }
-                            },
-                            onToggleLanguage = { viewModel.toggleLanguage() }
-                        )
+                    composable(ROUTE_LEVEL_MAP) { entry ->
+                        val fromGameplay = transitionFromRoute == ROUTE_GAMEPLAY
+                        DirectionalSlideIn(
+                            fromDirection = if (fromGameplay) -1 else 0,
+                            slideKey = entry.id,
+                            testTag = "level_map_slide_container"
+                        ) {
+                            LevelMapScreen(
+                                progress = progress,
+                                onSelectLevel = { level ->
+                                    viewModel.startLevel(level)
+                                    navController.navigate(ROUTE_GAMEPLAY) {
+                                        launchSingleTop = true
+                                    }
+                                },
+                                onToggleLanguage = { viewModel.toggleLanguage() }
+                            )
+                        }
                     }
 
-                    composable(ROUTE_GAMEPLAY) {
-                        GameplayScreen(
-                            progress = progress,
-                            gameplay = state.gameplay,
-                            onDragStart = { viewModel.onDragStart(it) },
-                            onDragMove = { viewModel.onDragMove(it) },
-                            onDragEnd = { viewModel.onDragEnd() },
-                            onUseHint = { viewModel.useHint() },
-                            onUseWordHint = { viewModel.useWordHint() },
-                            onShuffle = { viewModel.shuffleBoard() },
-                            onToggleLanguage = { viewModel.toggleLanguage() },
-                            onNavigateHome = {
-                                viewModel.soundEffects.playClick()
-                                viewModel.stopTimer()
-                                navController.popBackStack(ROUTE_HOME, inclusive = false)
-                            },
-                            onNavigateLevels = {
-                                viewModel.soundEffects.playClick()
-                                viewModel.stopTimer()
-                                navController.navigate(ROUTE_LEVEL_MAP) {
-                                    launchSingleTop = true
+                    composable(ROUTE_GAMEPLAY) { entry ->
+                        val fromLevelMap = transitionFromRoute == ROUTE_LEVEL_MAP
+                        DirectionalSlideIn(
+                            fromDirection = if (fromLevelMap) 1 else 0,
+                            slideKey = entry.id,
+                            testTag = "gameplay_slide_container"
+                        ) {
+                            GameplayScreen(
+                                progress = progress,
+                                gameplay = state.gameplay,
+                                onDragStart = { viewModel.onDragStart(it) },
+                                onDragMove = { viewModel.onDragMove(it) },
+                                onDragEnd = { viewModel.onDragEnd() },
+                                onUseHint = { viewModel.useHint() },
+                                onUseWordHint = { viewModel.useWordHint() },
+                                onShuffle = { viewModel.shuffleBoard() },
+                                onToggleLanguage = { viewModel.toggleLanguage() },
+                                onNavigateHome = {
+                                    viewModel.soundEffects.playClick()
+                                    viewModel.stopTimer()
+                                    navController.popBackStack(ROUTE_HOME, inclusive = false)
+                                },
+                                onNavigateLevels = {
+                                    viewModel.soundEffects.playClick()
+                                    viewModel.stopTimer()
+                                    val popped = navController.popBackStack(ROUTE_LEVEL_MAP, inclusive = false)
+                                    if (!popped) {
+                                        navController.navigate(ROUTE_LEVEL_MAP) {
+                                            launchSingleTop = true
+                                        }
+                                    }
+                                },
+                                onNavigateSettings = {
+                                    viewModel.soundEffects.playClick()
+                                    viewModel.stopTimer()
+                                    navController.navigate(ROUTE_SETTINGS) {
+                                        launchSingleTop = true
+                                    }
                                 }
-                            },
-                            onNavigateSettings = {
-                                viewModel.soundEffects.playClick()
-                                viewModel.stopTimer()
-                                navController.navigate(ROUTE_SETTINGS) {
-                                    launchSingleTop = true
-                                }
-                            }
-                        )
+                            )
+                        }
                     }
 
                     composable(ROUTE_SHOP) {
@@ -303,5 +355,39 @@ fun WordSplashApp(
                 .padding(bottom = 84.dp)
         )
     }
+    }
+}
+
+/**
+ * Slides screen content horizontally into place when transitioning between
+ * LevelMapScreen and GameplayScreen (fromDirection: +1 = from right, -1 = from left, 0 = instant).
+ */
+@Composable
+fun DirectionalSlideIn(
+    fromDirection: Int,
+    slideKey: Any?,
+    testTag: String,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    if (fromDirection == 0) {
+        Box(modifier = modifier.fillMaxSize().testTag(testTag)) {
+            content()
+        }
+        return
+    }
+
+    val visibleState = remember(slideKey, fromDirection) {
+        MutableTransitionState(false).apply { targetState = true }
+    }
+    AnimatedVisibility(
+        visibleState = visibleState,
+        enter = slideInHorizontally(
+            animationSpec = tween(durationMillis = 340, easing = FastOutSlowInEasing),
+            initialOffsetX = { fullWidth -> if (fromDirection > 0) fullWidth else -fullWidth }
+        ) + fadeIn(animationSpec = tween(durationMillis = 240)),
+        modifier = modifier.fillMaxSize().testTag(testTag)
+    ) {
+        content()
     }
 }

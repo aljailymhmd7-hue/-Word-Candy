@@ -20,7 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.MonetizationOn
 import androidx.compose.material.icons.rounded.Star
@@ -197,7 +197,7 @@ fun WinScreen(
                 GlossyCandyButton(
                     text = LocalizedStrings.nextLevel(language),
                     gradientColors = listOf(CandyOrange, CandyPinkRed),
-                    trailingIcon = Icons.AutoMirrored.Rounded.ArrowForward,
+                    trailingIcon = Icons.Rounded.ArrowForward,
                     height = 58.dp,
                     onClick = onNextLevel,
                     modifier = Modifier.fillMaxWidth(),

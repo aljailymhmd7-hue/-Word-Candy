@@ -12,6 +12,8 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.test.core.app.ApplicationProvider
 import com.example.ads.UnityAdsManager
 import com.example.ads.UnityAdsStatus
+import com.example.audio.AndroidHapticsController
+import com.example.audio.HapticCue
 import com.example.audio.SoundEffect
 import com.example.audio.SoundEffects
 import com.example.data.LevelRepository
@@ -43,7 +45,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [36])
+@Config(sdk = [33])
 class WordSplashEngineTest {
 
     @get:Rule
@@ -430,5 +432,46 @@ class WordSplashEngineTest {
         assertEquals(1, rewardCount)
         assertEquals(0, skippedCount)
         assertEquals(1, reloadCount)
+    }
+
+    @Test
+    fun `directional slide transition animates into view for both directions`() {
+        composeRule.mainClock.autoAdvance = false
+        composeRule.setContent {
+            WordSplashTheme {
+                DirectionalSlideIn(
+                    fromDirection = 1,
+                    slideKey = "level_to_game",
+                    testTag = "slide_right_test"
+                ) {
+                    androidx.compose.material3.Text("Gameplay")
+                }
+            }
+        }
+
+        composeRule.mainClock.advanceTimeBy(400)
+        composeRule.onNodeWithTag("slide_right_test").assertIsDisplayed()
+        composeRule.onNodeWithText("Gameplay").assertIsDisplayed()
+    }
+
+    @Test
+    fun `haptics controller triggers letter selection and word found cues safely`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val haptics = AndroidHapticsController(context)
+
+        haptics.enabled = false
+        haptics.playLetterTick()
+        haptics.playWordFound()
+        haptics.playLevelComplete()
+        haptics.playWrongGuess()
+
+        haptics.enabled = true
+        HapticCue.entries.forEach { cue ->
+            haptics.perform(cue)
+        }
+        haptics.playLetterTick()
+        haptics.playWordFound()
+        haptics.playLevelComplete()
+        haptics.playWrongGuess()
     }
 }
