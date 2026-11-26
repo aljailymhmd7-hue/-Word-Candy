@@ -4,7 +4,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      KEYSTORE_PATH: app/my-upload-key.jks
+      KEYSTORE_PATH: my-upload-key.jks
       STORE_PASSWORD: upload123456
       KEY_PASSWORD: upload123456
     steps:
@@ -13,23 +13,4 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-      - uses: gradle/actions/setup-gradle@v3
-      
-      - name: Create files EVERYWHERE
-        run: |
-          echo '{"project_info":{"project_number":"123","project_id":"dummy"},"client":[{"client_info":{"mobilesdk_app_id":"1:123:android:dummy","android_client_info":{"package_name":"com.elgaily.wordcandy"}},"oauth_client":[],"api_key":[{"current_key":"dummy"}],"services":{}}]}' > app/google-services.json
-          rm -rf .gradle build app/build
-          keytool -genkey -v -keystore app/my-upload-key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload -storepass upload123456 -keypass upload123456 -dname "CN=WordCandy" -noprompt
-          cp app/my-upload-key.jks my-upload-key.jks
-          cp app/my-upload-key.jks debug.keystore || true
-          cp app/my-upload-key.jks app/debug.keystore || true
-          ls -lh *.jks app/*.jks
-      
-      - name: Build AAB
-        run: gradle bundleRelease --no-configuration-cache --stacktrace
-      
-      - name: Upload AAB
-        uses: actions/upload-artifact@v4
-        with:
-          name: WordCandy-AAB
-          path: "**/build/outputs/bundle/release/*.aab"
+      - uses: gradle/actions/setup-gradle
