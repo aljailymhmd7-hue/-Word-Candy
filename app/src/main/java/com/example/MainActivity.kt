@@ -93,9 +93,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        if (isFinishing) {
-            UnityAdsManager.releaseBanner(this)
-        }
+        UnityAdsManager.releaseBanner(this)
         super.onDestroy()
     }
 }

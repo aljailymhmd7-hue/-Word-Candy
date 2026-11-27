@@ -26,12 +26,13 @@ jobs:
           KEYSTORE_PATH: my-upload-key.jks
           STORE_PASSWORD: upload123456
           KEY_PASSWORD: upload123456
+          BUILD_NUMBER: ${{ github.run_number }}
         run: |
           if [ -f "./gradlew" ]; then
             chmod +x gradlew
-            ./gradlew assembleRelease --no-configuration-cache
+            ./gradlew assembleRelease -PversionCode="$BUILD_NUMBER" -PversionName="1.0.$BUILD_NUMBER" --no-configuration-cache
           else
-            gradle assembleRelease --no-configuration-cache
+            gradle assembleRelease -PversionCode="$BUILD_NUMBER" -PversionName="1.0.$BUILD_NUMBER" --no-configuration-cache
           fi
 
       - uses: actions/upload-artifact@v4

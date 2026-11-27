@@ -29,9 +29,12 @@ import com.unity3d.ads.IUnityAdsShowListener
 import com.unity3d.ads.UnityAds
 import com.unity3d.ads.UnityAdsShowOptions
 import com.unity3d.ads.metadata.MediationMetaData
+import com.unity3d.services.banners.BannerErrorCode
 import com.unity3d.services.banners.BannerErrorInfo
 import com.unity3d.services.banners.BannerView
+import com.unity3d.services.banners.IUnityBannerListener
 import com.unity3d.services.banners.UnityBannerSize
+import com.unity3d.services.banners.UnityBanners
 import com.unity3d.services.core.properties.ClientProperties
 import java.lang.ref.WeakReference
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -62,8 +65,10 @@ object UnityAdsManager {
     // Unity Ads Android Network Placement IDs
     private const val INTERSTITIAL_PLACEMENT = "BP_Interstitial_Android"
     private const val REWARDED_PLACEMENT = "BP_Rewarded_Android"
-    const val BANNER_PLACEMENT = "BP_Banner_Android"
+    const val BANNER_PLACEMENT = "Banner_Android"
 
+    internal const val BANNER_INIT_DELAY_MS = 1_000L
+    internal const val BANNER_NO_FILL_RETRY_DELAY_MS = 30_000L
     private const val MAX_REWARDED_RETRIES = 4
     private const val MAX_BANNER_RETRIES = 5
 
@@ -75,15 +80,47 @@ object UnityAdsManager {
     private var bannerActivityRef: WeakReference<Activity>? = null
     private var bannerView: BannerView? = null
     private var isBannerLoading = false
+    private var isBannerInitDelayPending = false
     private var isInterstitialLoading = false
     private var rewardedRetryAttempt = 0
     private var bannerRetryAttempt = 0
 
     private val rewardedRetryRunnable = Runnable { preloadRewarded() }
     private val bannerRetryRunnable = Runnable { preloadBanner(activityRef?.get()) }
+    private val bannerInitDelayRunnable = Runnable {
+        isBannerInitDelayPending = false
+        preloadBanner(activityRef?.get())
+    }
+
+    val unityBannerListener: IUnityBannerListener = object : IUnityBannerListener {
+        override fun onUnityBannerLoaded(placementId: String?, view: View?) {
+            Log.d(TAG, "UnityBanner loaded: placement=$placementId")
+        }
+
+        override fun onUnityBannerUnloaded(placementId: String?) {
+            Log.d(TAG, "UnityBanner unloaded: placement=$placementId")
+        }
+
+        override fun onUnityBannerShow(placementId: String?) {
+            Log.d(TAG, "UnityBanner shown: placement=$placementId")
+        }
+
+        override fun onUnityBannerClick(placementId: String?) {
+            Log.d(TAG, "UnityBanner clicked: placement=$placementId")
+        }
+
+        override fun onUnityBannerHide(placementId: String?) {
+            Log.d(TAG, "UnityBanner hidden: placement=$placementId")
+        }
+
+        override fun onUnityBannerError(message: String?) {
+            Log.e(TAG, "UnityBanner error: ${message.orEmpty()}")
+        }
+    }
 
     fun initialize(context: Context) {
         findActivity(context)?.let { activityRef = WeakReference(it) }
+        UnityBanners.setBannerListener(unityBannerListener)
 
         _status.update {
             it.copy(
@@ -96,7 +133,11 @@ object UnityAdsManager {
         }
         if (UnityAds.isInitialized) {
             _status.update { it.copy(isInitialized = true) }
-            preloadAll()
+            if (!isBannerInitDelayPending) {
+                preloadBanner(activityRef?.get())
+            }
+            preloadInterstitial()
+            preloadRewarded()
             return
         }
 
@@ -121,7 +162,9 @@ object UnityAdsManager {
                                 lastError = null
                             )
                         }
-                        preloadAll()
+                        preloadInterstitial()
+                        preloadRewarded()
+                        scheduleBannerLoadAfterInit()
                     }
                 }
 
@@ -161,10 +204,17 @@ object UnityAdsManager {
         }
     }
 
+    internal fun scheduleBannerLoadAfterInit() {
+        mainHandler.removeCallbacks(bannerInitDelayRunnable)
+        mainHandler.removeCallbacks(bannerRetryRunnable)
+        isBannerInitDelayPending = true
+        mainHandler.postDelayed(bannerInitDelayRunnable, BANNER_INIT_DELAY_MS)
+    }
+
     fun onActivityResumed(activity: Activity) {
         activityRef = WeakReference(activity)
         if (UnityAds.isInitialized) {
-            if (!_status.value.isBannerReady && !isBannerLoading) {
+            if (!isBannerInitDelayPending && !_status.value.isBannerReady && !isBannerLoading) {
                 bannerRetryAttempt = 0
                 preloadBanner(activity)
             }
@@ -180,13 +230,17 @@ object UnityAdsManager {
 
     fun releaseBanner(activity: Activity) {
         runOnMainThread {
-            if (bannerActivityRef?.get() === activity) {
+            val owner = bannerActivityRef?.get()
+            if (owner === activity || (bannerView != null && owner == null)) {
+                mainHandler.removeCallbacks(bannerInitDelayRunnable)
                 mainHandler.removeCallbacks(bannerRetryRunnable)
+                isBannerInitDelayPending = false
                 isBannerLoading = false
                 bannerView?.let { bv ->
                     (bv.parent as? ViewGroup)?.removeView(bv)
                     bv.destroy()
                 }
+                runCatching { UnityBanners.destroy() }
                 bannerView = null
                 bannerActivityRef = null
                 _status.update { it.copy(isBannerReady = false) }
@@ -196,18 +250,13 @@ object UnityAdsManager {
 
     fun getBannerView(): BannerView? = bannerView
 
-    private fun preloadAll() {
-        preloadBanner(activityRef?.get())
-        preloadInterstitial()
-        preloadRewarded()
-    }
-
     fun preloadBanner(activity: Activity? = activityRef?.get()) {
         runOnMainThread {
             if (activity == null || activity.isFinishing || activity.isDestroyed || !UnityAds.isInitialized) {
                 return@runOnMainThread
             }
             mainHandler.removeCallbacks(bannerRetryRunnable)
+            UnityBanners.setBannerListener(unityBannerListener)
 
             val existingOwner = bannerActivityRef?.get()
             if (bannerView != null && existingOwner !== activity) {
@@ -239,6 +288,20 @@ object UnityAdsManager {
                                     lastError = null
                                 )
                             }
+                            unityBannerListener.onUnityBannerLoaded(BANNER_PLACEMENT, bannerAdView)
+                        }
+                    }
+
+                    override fun onBannerShown(bannerAdView: BannerView?) {
+                        runOnMainThread {
+                            bannerAdView?.visibility = View.VISIBLE
+                            unityBannerListener.onUnityBannerShow(BANNER_PLACEMENT)
+                        }
+                    }
+
+                    override fun onBannerClick(bannerAdView: BannerView?) {
+                        runOnMainThread {
+                            unityBannerListener.onUnityBannerClick(BANNER_PLACEMENT)
                         }
                     }
 
@@ -247,24 +310,10 @@ object UnityAdsManager {
                         errorInfo: BannerErrorInfo?
                     ) {
                         runOnMainThread {
-                            isBannerLoading = false
-                            val msg = errorInfo?.errorMessage.orEmpty()
-                            val missing = msg.contains("Placement not found", ignoreCase = true)
-                            Log.w(TAG, "Banner '$BANNER_PLACEMENT' failed: $msg")
-                            _status.update {
-                                it.copy(
-                                    isBannerReady = false,
-                                    isPlacementMissing = it.isPlacementMissing || missing,
-                                    lastError = msg.ifBlank { it.lastError }
-                                )
-                            }
-                            if (!missing && bannerRetryAttempt < MAX_BANNER_RETRIES) {
-                                bannerRetryAttempt++
-                                mainHandler.postDelayed(
-                                    bannerRetryRunnable,
-                                    bannerRetryAttempt * 4000L
-                                )
-                            }
+                            handleBannerLoadFailure(
+                                errorCode = errorInfo?.errorCode,
+                                errorMessage = errorInfo?.errorMessage.orEmpty()
+                            )
                         }
                     }
                 }
@@ -276,6 +325,62 @@ object UnityAdsManager {
             _status.update { it.copy(isBannerReady = false) }
             bv.load()
         }
+    }
+
+    internal fun handleBannerLoadFailure(
+        errorCode: BannerErrorCode?,
+        errorMessage: String,
+        scheduleRetry: (Long) -> Unit = { delayMs ->
+            mainHandler.removeCallbacks(bannerRetryRunnable)
+            mainHandler.postDelayed(bannerRetryRunnable, delayMs)
+        }
+    ) {
+        isBannerLoading = false
+        val codeName = errorCode?.name ?: "UNKNOWN"
+        val formattedError = "Banner '$BANNER_PLACEMENT' failed ($codeName): $errorMessage"
+        unityBannerListener.onUnityBannerError(formattedError)
+
+        val isNoFill = errorCode == BannerErrorCode.NO_FILL ||
+            errorMessage.contains("NO_FILL", ignoreCase = true) ||
+            errorMessage.contains("no fill", ignoreCase = true)
+        val missing = errorMessage.contains("Placement not found", ignoreCase = true)
+
+        _status.update {
+            it.copy(
+                isBannerReady = false,
+                isPlacementMissing = it.isPlacementMissing || missing,
+                lastError = formattedError
+            )
+        }
+
+        val retryDelayMs = computeBannerRetryDelayMs(
+            errorCode = errorCode,
+            errorMessage = errorMessage,
+            currentAttempt = bannerRetryAttempt
+        )
+        if (retryDelayMs != null) {
+            if (!isNoFill) {
+                bannerRetryAttempt++
+            }
+            Log.w(TAG, "Retrying banner '$BANNER_PLACEMENT' in ${retryDelayMs}ms (noFill=$isNoFill)")
+            scheduleRetry(retryDelayMs)
+        }
+    }
+
+    internal fun computeBannerRetryDelayMs(
+        errorCode: BannerErrorCode?,
+        errorMessage: String,
+        currentAttempt: Int
+    ): Long? {
+        val isNoFill = errorCode == BannerErrorCode.NO_FILL ||
+            errorMessage.contains("NO_FILL", ignoreCase = true) ||
+            errorMessage.contains("no fill", ignoreCase = true)
+        if (isNoFill) return BANNER_NO_FILL_RETRY_DELAY_MS
+
+        val missing = errorMessage.contains("Placement not found", ignoreCase = true)
+        if (missing || currentAttempt >= MAX_BANNER_RETRIES) return null
+
+        return (currentAttempt + 1) * 4_000L
     }
 
     fun preloadInterstitial() {
@@ -527,10 +632,11 @@ object UnityAdsManager {
 @Composable
 fun UnityBannerAdBar(
     adsStatus: UnityAdsStatus,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    bannerViewProvider: () -> View? = { UnityAdsManager.getBannerView() }
 ) {
     if (!adsStatus.isInitialized || !adsStatus.isBannerReady) return
-    val bannerView = UnityAdsManager.getBannerView() ?: return
+    val bannerView = bannerViewProvider() ?: return
     val density = LocalDensity.current
     val bannerWidthPx = remember(density) { with(density) { 320.dp.roundToPx() } }
     val bannerHeightPx = remember(density) { with(density) { 50.dp.roundToPx() } }
@@ -544,11 +650,14 @@ fun UnityBannerAdBar(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(54.dp)
+            .height(50.dp)
             .testTag("unity_banner_ad"),
         contentAlignment = Alignment.Center
     ) {
         AndroidView(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp),
             factory = { ctx ->
                 FrameLayout(ctx).apply {
                     (bannerView.parent as? ViewGroup)?.removeView(bannerView)
@@ -565,10 +674,10 @@ fun UnityBannerAdBar(
                 }
             },
             update = { container ->
+                bannerView.visibility = View.VISIBLE
                 if (bannerView.parent !== container) {
                     (bannerView.parent as? ViewGroup)?.removeView(bannerView)
                     container.removeAllViews()
-                    bannerView.visibility = View.VISIBLE
                     container.addView(
                         bannerView,
                         FrameLayout.LayoutParams(

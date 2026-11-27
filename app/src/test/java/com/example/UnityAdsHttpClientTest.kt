@@ -1,15 +1,39 @@
 package com.example
 
 import android.content.Context
+import android.view.View
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.example.ads.UnityAdsManager
+import com.example.ads.UnityAdsStatus
+import com.example.ads.UnityBannerAdBar
+import com.example.data.LevelRepository
+import com.example.engine.WordSplashGameEngine
+import com.example.model.AppLanguage
+import com.example.model.GameProgress
+import com.example.ui.GameplayUiState
+import com.example.ui.screens.GameplayScreen
+import com.example.ui.screens.LevelMapScreen
+import com.example.ui.theme.WordSplashTheme
 import com.unity3d.ads.core.domain.HttpClientProvider
+import com.unity3d.services.banners.BannerErrorCode
 import com.unity3d.services.core.device.StorageManager
 import com.unity3d.services.core.di.ServiceKey
 import com.unity3d.services.core.di.ServiceProvider
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -18,6 +42,9 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class UnityAdsHttpClientTest {
+
+    @get:Rule
+    val composeRule = createComposeRule()
 
     @Test
     fun `configureNonGmsHttpClient selects OkHttp3Client without GMS Cronet`() = runTest {
@@ -40,5 +67,113 @@ class UnityAdsHttpClientTest {
         )
         val client = httpClientProvider.invoke()
         assertEquals("OkHttp3Client", client::class.java.simpleName)
+    }
+
+    @Test
+    fun `banner uses Banner_Android placement, 1s init delay, and 30s retry on NO_FILL`() {
+        assertEquals("Banner_Android", UnityAdsManager.BANNER_PLACEMENT)
+        assertEquals(1_000L, UnityAdsManager.BANNER_INIT_DELAY_MS)
+        assertEquals(30_000L, UnityAdsManager.BANNER_NO_FILL_RETRY_DELAY_MS)
+
+        var scheduledDelayMs: Long? = null
+        UnityAdsManager.handleBannerLoadFailure(
+            errorCode = BannerErrorCode.NO_FILL,
+            errorMessage = "No fill",
+            scheduleRetry = { delay -> scheduledDelayMs = delay }
+        )
+
+        assertEquals(30_000L, scheduledDelayMs)
+        assertEquals(false, UnityAdsManager.status.value.isBannerReady)
+        assertTrue(UnityAdsManager.status.value.lastError.orEmpty().contains("NO_FILL"))
+    }
+
+    @Test
+    fun `banner ad renders with 50dp height at bottom of level map and gameplay screens without overlapping buttons`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = LevelRepository(context)
+        val level4 = runBlocking { repo.getLevel(AppLanguage.EN, 4) }
+        val engine = WordSplashGameEngine()
+        engine.startLevel(level4, previouslyUnlockedLevel = 4)
+        val gameplayState = GameplayUiState(
+            levelData = engine.state.levelData,
+            board = engine.state.board,
+            isLoading = false
+        )
+        val adsStatus = UnityAdsStatus(isConfigured = true, isInitialized = true, isBannerReady = true)
+        val fakeBannerView = View(context)
+
+        composeRule.setContent {
+            WordSplashTheme {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        GameplayScreen(
+                            progress = GameProgress(language = AppLanguage.EN),
+                            gameplay = gameplayState,
+                            onDragStart = {},
+                            onDragMove = {},
+                            onDragEnd = {},
+                            onUseHint = {},
+                            onUseWordHint = {},
+                            onShuffle = {},
+                            onToggleLanguage = {},
+                            onNavigateHome = {},
+                            onNavigateLevels = {},
+                            onNavigateSettings = {}
+                        )
+                    }
+                    UnityBannerAdBar(
+                        adsStatus = adsStatus,
+                        bannerViewProvider = { fakeBannerView }
+                    )
+                }
+            }
+        }
+
+        composeRule.waitForIdle()
+        val bannerNode = composeRule.onNodeWithTag("unity_banner_ad").assertIsDisplayed()
+        val bannerBounds = bannerNode.getUnclippedBoundsInRoot()
+        val hintBounds = composeRule.onNodeWithTag("hint_button").assertIsDisplayed().getUnclippedBoundsInRoot()
+        val shuffleBounds = composeRule.onNodeWithTag("shuffle_button").assertIsDisplayed().getUnclippedBoundsInRoot()
+
+        val bannerHeightDp = (bannerBounds.bottom - bannerBounds.top).value
+        assertEquals(50f, bannerHeightDp, 0.5f)
+        assertTrue(bannerBounds.top >= hintBounds.bottom - 0.5.dp)
+        assertTrue(bannerBounds.top >= shuffleBounds.bottom - 0.5.dp)
+    }
+
+    @Test
+    fun `banner ad stays visible at bottom of level map screen`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val adsStatus = UnityAdsStatus(isConfigured = true, isInitialized = true, isBannerReady = true)
+        val fakeBannerView = View(context)
+
+        composeRule.setContent {
+            WordSplashTheme {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        LevelMapScreen(
+                            progress = GameProgress(language = AppLanguage.EN, unlockedLevel = 4),
+                            onSelectLevel = {},
+                            onToggleLanguage = {}
+                        )
+                    }
+                    UnityBannerAdBar(
+                        adsStatus = adsStatus,
+                        bannerViewProvider = { fakeBannerView }
+                    )
+                }
+            }
+        }
+
+        composeRule.waitForIdle()
+        val bannerBounds = composeRule.onNodeWithTag("unity_banner_ad")
+            .assertIsDisplayed()
+            .getUnclippedBoundsInRoot()
+        val playButtonBounds = composeRule.onNodeWithTag("map_play_current_button")
+            .assertIsDisplayed()
+            .getUnclippedBoundsInRoot()
+
+        assertEquals(50f, (bannerBounds.bottom - bannerBounds.top).value, 0.5f)
+        assertTrue(bannerBounds.top >= playButtonBounds.bottom - 0.5.dp)
     }
 }
