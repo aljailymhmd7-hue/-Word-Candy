@@ -10,17 +10,22 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.BuildConfig
 import com.unity3d.ads.IUnityAdsInitializationListener
@@ -47,6 +52,8 @@ data class UnityAdsStatus(
     val isConfigured: Boolean = true,
     val isInitialized: Boolean = false,
     val isBannerReady: Boolean = false,
+    val showBannerFallbackText: Boolean = false,
+    val bannerViewEpoch: Int = 0,
     val isInterstitialReady: Boolean = false,
     val isRewardedReady: Boolean = false,
     val isRewardedLoading: Boolean = false,
@@ -59,16 +66,18 @@ data class UnityAdsStatus(
 object UnityAdsManager {
 
     private const val TAG = "UnityAdsManager"
+    private const val BANNER_LOG_TAG = "UNITY_BANNER"
     private const val UNITY_GAME_ID = "800453986"
     private val TEST_MODE = BuildConfig.DEBUG
 
     // Unity Ads Android Network Placement IDs
     private const val INTERSTITIAL_PLACEMENT = "BP_Interstitial_Android"
     private const val REWARDED_PLACEMENT = "BP_Rewarded_Android"
-    const val BANNER_PLACEMENT = "BP_Banner_Android"
-    internal val BANNER_PLACEMENT_CANDIDATES = listOf(BANNER_PLACEMENT, "Banner_Android")
+    const val BANNER_PLACEMENT = "Banner_Android"
+    internal val BANNER_PLACEMENT_CANDIDATES = listOf("BP_Banner_Android", BANNER_PLACEMENT)
 
-    internal const val BANNER_INIT_DELAY_MS = 1_000L
+    internal const val BANNER_INIT_DELAY_MS = 2_000L
+    internal const val BANNER_FALLBACK_TIMEOUT_MS = 5_000L
     internal const val BANNER_NO_FILL_RETRY_DELAY_MS = 30_000L
     private const val MAX_REWARDED_RETRIES = 4
     private const val MAX_BANNER_RETRIES = 5
@@ -92,6 +101,12 @@ object UnityAdsManager {
     private val bannerInitDelayRunnable = Runnable {
         isBannerInitDelayPending = false
         preloadBanner(activityRef?.get())
+    }
+    private val bannerFallbackTimeoutRunnable = Runnable {
+        if (!_status.value.isBannerReady) {
+            Log.w(BANNER_LOG_TAG, "Banner did not load within 5s; showing Advertisement fallback text")
+            _status.update { it.copy(showBannerFallbackText = true) }
+        }
     }
 
     val unityBannerListener: IUnityBannerListener = object : IUnityBannerListener {
@@ -145,6 +160,7 @@ object UnityAdsManager {
 
         val appContext = context.applicationContext
         configureNonGmsHttpClient(appContext)
+        scheduleBannerFallbackTimeout()
 
         UnityAds.initialize(
             appContext,
@@ -153,9 +169,9 @@ object UnityAdsManager {
             object : IUnityAdsInitializationListener {
                 override fun onInitializationComplete() {
                     runOnMainThread {
-                        Log.d(
-                            TAG,
-                            "Unity Ads initialization complete (Game ID: $UNITY_GAME_ID, testMode=$TEST_MODE)"
+                        Log.i(
+                            BANNER_LOG_TAG,
+                            "UnityAds init complete (Game ID: $UNITY_GAME_ID, testMode=$TEST_MODE)"
                         )
                         _status.update {
                             it.copy(
@@ -175,7 +191,7 @@ object UnityAdsManager {
                     message: String
                 ) {
                     runOnMainThread {
-                        Log.w(TAG, "Unity Ads init failed ($error): $message")
+                        Log.e(BANNER_LOG_TAG, "Unity Ads init failed ($error): $message")
                         val mismatch = message.contains("mismatched platform", ignoreCase = true)
                         _status.update {
                             it.copy(
@@ -211,6 +227,14 @@ object UnityAdsManager {
         mainHandler.removeCallbacks(bannerRetryRunnable)
         isBannerInitDelayPending = true
         mainHandler.postDelayed(bannerInitDelayRunnable, BANNER_INIT_DELAY_MS)
+        scheduleBannerFallbackTimeout()
+    }
+
+    private fun scheduleBannerFallbackTimeout() {
+        mainHandler.removeCallbacks(bannerFallbackTimeoutRunnable)
+        if (!_status.value.isBannerReady) {
+            mainHandler.postDelayed(bannerFallbackTimeoutRunnable, BANNER_FALLBACK_TIMEOUT_MS)
+        }
     }
 
     fun currentBannerPlacement(): String =
@@ -243,6 +267,7 @@ object UnityAdsManager {
             if (owner === activity || (bannerView != null && owner == null)) {
                 mainHandler.removeCallbacks(bannerInitDelayRunnable)
                 mainHandler.removeCallbacks(bannerRetryRunnable)
+                mainHandler.removeCallbacks(bannerFallbackTimeoutRunnable)
                 isBannerInitDelayPending = false
                 isBannerLoading = false
                 bannerView?.let { bv ->
@@ -252,7 +277,12 @@ object UnityAdsManager {
                 runCatching { UnityBanners.destroy() }
                 bannerView = null
                 bannerActivityRef = null
-                _status.update { it.copy(isBannerReady = false) }
+                _status.update {
+                    it.copy(
+                        isBannerReady = false,
+                        bannerViewEpoch = it.bannerViewEpoch + 1
+                    )
+                }
             }
         }
     }
@@ -262,6 +292,7 @@ object UnityAdsManager {
     fun preloadBanner(activity: Activity? = activityRef?.get()) {
         runOnMainThread {
             if (activity == null || activity.isFinishing || activity.isDestroyed || !UnityAds.isInitialized) {
+                Log.d(BANNER_LOG_TAG, "Skipping banner load: activity=${activity != null}, init=${UnityAds.isInitialized}")
                 return@runOnMainThread
             }
             mainHandler.removeCallbacks(bannerRetryRunnable)
@@ -274,26 +305,36 @@ object UnityAdsManager {
                 bannerView?.destroy()
                 bannerView = null
                 isBannerLoading = false
-                _status.update { it.copy(isBannerReady = false) }
+                _status.update {
+                    it.copy(
+                        isBannerReady = false,
+                        bannerViewEpoch = it.bannerViewEpoch + 1
+                    )
+                }
             }
 
             if (bannerView != null && (_status.value.isBannerReady || isBannerLoading)) {
                 return@runOnMainThread
             }
 
+            var createdNewView = false
             val bv = bannerView ?: BannerView(
                 activity,
                 activePlacement,
                 UnityBannerSize(320, 50)
             ).also { created ->
+                createdNewView = true
                 created.listener = object : BannerView.Listener() {
                     override fun onBannerLoaded(bannerAdView: BannerView?) {
                         runOnMainThread {
+                            mainHandler.removeCallbacks(bannerFallbackTimeoutRunnable)
                             bannerRetryAttempt = 0
                             isBannerLoading = false
+                            Log.i(BANNER_LOG_TAG, "Banner LOADED for placement $activePlacement")
                             _status.update {
                                 it.copy(
                                     isBannerReady = true,
+                                    showBannerFallbackText = false,
                                     isPlacementMissing = false,
                                     lastError = null
                                 )
@@ -305,6 +346,7 @@ object UnityAdsManager {
                     override fun onBannerShown(bannerAdView: BannerView?) {
                         runOnMainThread {
                             bannerAdView?.visibility = View.VISIBLE
+                            Log.i(BANNER_LOG_TAG, "Banner SHOWN for placement $activePlacement")
                             unityBannerListener.onUnityBannerShow(activePlacement)
                         }
                     }
@@ -333,7 +375,14 @@ object UnityAdsManager {
             }
 
             isBannerLoading = true
-            _status.update { it.copy(isBannerReady = false) }
+            _status.update {
+                it.copy(
+                    isBannerReady = false,
+                    bannerViewEpoch = if (createdNewView) it.bannerViewEpoch + 1 else it.bannerViewEpoch
+                )
+            }
+            scheduleBannerFallbackTimeout()
+            Log.d(BANNER_LOG_TAG, "Trying to load $activePlacement, init=${UnityAds.isInitialized}")
             bv.load()
         }
     }
@@ -351,6 +400,7 @@ object UnityAdsManager {
         isBannerLoading = false
         val codeName = errorCode?.name ?: "UNKNOWN"
         val formattedError = "Banner '$placementId' failed ($codeName): $errorMessage"
+        Log.w(BANNER_LOG_TAG, formattedError)
         unityBannerListener.onUnityBannerError(formattedError)
 
         val isNoFill = errorCode == BannerErrorCode.NO_FILL ||
@@ -367,10 +417,11 @@ object UnityAdsManager {
                 it.copy(
                     isBannerReady = false,
                     isPlacementMissing = false,
+                    bannerViewEpoch = it.bannerViewEpoch + 1,
                     lastError = formattedError
                 )
             }
-            Log.w(TAG, "Banner placement '$placementId' not found; trying fallback '${currentBannerPlacement()}'")
+            Log.w(BANNER_LOG_TAG, "Banner placement '$placementId' not found; trying fallback '${currentBannerPlacement()}'")
             onFallbackNextPlacement()
             return
         }
@@ -378,6 +429,7 @@ object UnityAdsManager {
         _status.update {
             it.copy(
                 isBannerReady = false,
+                showBannerFallbackText = true,
                 isPlacementMissing = it.isPlacementMissing || missing,
                 lastError = formattedError
             )
@@ -665,60 +717,74 @@ fun UnityBannerAdBar(
     modifier: Modifier = Modifier,
     bannerViewProvider: () -> View? = { UnityAdsManager.getBannerView() }
 ) {
-    if (!adsStatus.isInitialized || !adsStatus.isBannerReady) return
-    val bannerView = bannerViewProvider() ?: return
+    val bannerView = remember(adsStatus.bannerViewEpoch, adsStatus.isBannerReady) {
+        bannerViewProvider()
+    }
     val density = LocalDensity.current
     val bannerWidthPx = remember(density) { with(density) { 320.dp.roundToPx() } }
     val bannerHeightPx = remember(density) { with(density) { 50.dp.roundToPx() } }
 
     DisposableEffect(bannerView) {
         onDispose {
-            (bannerView.parent as? ViewGroup)?.removeView(bannerView)
+            (bannerView?.parent as? ViewGroup)?.removeView(bannerView)
         }
     }
 
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(50.dp)
+            .height(60.dp)
+            .background(Color.Black)
             .testTag("unity_banner_ad"),
         contentAlignment = Alignment.Center
     ) {
-        AndroidView(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(50.dp),
-            factory = { ctx ->
-                FrameLayout(ctx).apply {
-                    (bannerView.parent as? ViewGroup)?.removeView(bannerView)
+        if (bannerView != null) {
+            AndroidView(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp),
+                factory = { ctx ->
+                    FrameLayout(ctx).apply {
+                        (bannerView.parent as? ViewGroup)?.removeView(bannerView)
+                        bannerView.visibility = View.VISIBLE
+                        addView(
+                            bannerView,
+                            FrameLayout.LayoutParams(
+                                bannerWidthPx,
+                                bannerHeightPx,
+                                Gravity.CENTER
+                            )
+                        )
+                        bannerView.requestLayout()
+                    }
+                },
+                update = { container ->
                     bannerView.visibility = View.VISIBLE
-                    addView(
-                        bannerView,
-                        FrameLayout.LayoutParams(
-                            bannerWidthPx,
-                            bannerHeightPx,
-                            Gravity.CENTER
+                    if (bannerView.parent !== container) {
+                        (bannerView.parent as? ViewGroup)?.removeView(bannerView)
+                        container.removeAllViews()
+                        container.addView(
+                            bannerView,
+                            FrameLayout.LayoutParams(
+                                bannerWidthPx,
+                                bannerHeightPx,
+                                Gravity.CENTER
+                            )
                         )
-                    )
-                    bannerView.requestLayout()
+                        bannerView.requestLayout()
+                    }
                 }
-            },
-            update = { container ->
-                bannerView.visibility = View.VISIBLE
-                if (bannerView.parent !== container) {
-                    (bannerView.parent as? ViewGroup)?.removeView(bannerView)
-                    container.removeAllViews()
-                    container.addView(
-                        bannerView,
-                        FrameLayout.LayoutParams(
-                            bannerWidthPx,
-                            bannerHeightPx,
-                            Gravity.CENTER
-                        )
-                    )
-                    bannerView.requestLayout()
-                }
-            }
-        )
+            )
+        }
+
+        if (!adsStatus.isBannerReady && adsStatus.showBannerFallbackText) {
+            Text(
+                text = "Advertisement",
+                color = Color.White,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.testTag("unity_banner_fallback_text")
+            )
+        }
     }
 }

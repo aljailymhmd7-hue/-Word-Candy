@@ -94,6 +94,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.example.audio.LocalHaptics
 import com.example.audio.LocalSoundEffects
@@ -119,7 +120,8 @@ import com.example.ui.theme.CandyOrange
 import com.example.ui.theme.CandyPinkRed
 import com.example.ui.theme.CandyPurple
 import com.example.ui.theme.CandyYellow
-import com.example.ui.theme.FredokaFontFamily
+import com.example.ui.theme.NunitoBlackFontFamily
+import com.example.ui.theme.NunitoBoldFontFamily
 import com.example.ui.theme.RainbowColors
 import com.example.ui.theme.SurfaceDarkPurple
 import com.example.ui.theme.TilePalette
@@ -180,7 +182,10 @@ fun GameplayScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     IconButton(
                         onClick = onNavigateHome,
                         modifier = Modifier
@@ -196,16 +201,18 @@ fun GameplayScreen(
                         )
                     }
                     Spacer(modifier = Modifier.width(8.dp))
-                    Column {
+                    Column(modifier = Modifier.weight(1f).padding(end = 6.dp)) {
                         Text(
-                            text = LocalizedStrings.findTheWords(lang, levelData.level),
+                            text = LocalizedStrings.findTheWords(lang, levelData.level, totalWords),
                             style = MaterialTheme.typography.titleMedium,
-                            color = Color.White
+                            color = Color.White,
+                            maxLines = 1
                         )
                         Text(
-                            text = "${levelData.theme} • ${LocalizedStrings.wordsFoundRatio(lang, foundCount, totalWords, pct)}",
+                            text = LocalizedStrings.wordsFoundRatio(lang, foundCount, totalWords),
                             style = MaterialTheme.typography.labelMedium,
-                            color = CandyYellow
+                            color = CandyYellow,
+                            maxLines = 1
                         )
                     }
                 }
@@ -253,7 +260,7 @@ fun GameplayScreen(
                     .widthIn(max = 540.dp)
                     .fillMaxWidth()
             ) {
-                val estimatedChipRows = ((levelData.words.size + 2) / 3).coerceIn(1, 3)
+                val estimatedChipRows = ((levelData.words.size + 2) / 3).coerceIn(1, 4)
                 val reservedChipsHeight = (estimatedChipRows * 38 + 16).dp
                 val gridMaxSide = minOf(maxWidth, (maxHeight - reservedChipsHeight).coerceAtLeast(210.dp))
 
@@ -588,8 +595,10 @@ private fun WordChip(word: String, isFound: Boolean, isHighlighted: Boolean) {
             modifier = Modifier.size(16.dp)
         )
         Text(
-            text = word,
-            style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp),
+            text = word.uppercase(),
+            fontFamily = NunitoBoldFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp,
             color = Color.White
         )
     }
@@ -721,10 +730,9 @@ private fun WordSearchGrid(
                         }
                 ) {
                 val fontSize = when {
-                    gridSize <= 6 -> 22.sp
-                    gridSize <= 8 -> 17.sp
-                    gridSize <= 10 -> 14.sp
-                    else -> 11.5.sp
+                    gridSize <= 7 -> 22.sp
+                    gridSize <= 8 -> 20.sp
+                    else -> 18.sp
                 }
 
             Column(
@@ -801,17 +809,18 @@ private fun WordSearchGrid(
                             ) {
                                 Text(
                                     text = board.letters[r][c].toString(),
-                                    fontFamily = FredokaFontFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = fontSize,
-                                    color = Color.White,
                                     textAlign = TextAlign.Center,
                                     style = MaterialTheme.typography.titleLarge.copy(
+                                        fontFamily = NunitoBlackFontFamily,
+                                        fontWeight = FontWeight.Black,
                                         fontSize = fontSize,
+                                        lineHeight = fontSize,
+                                        letterSpacing = 0.02.em,
+                                        color = Color.White,
                                         shadow = Shadow(
-                                            color = Color.Black.copy(alpha = 0.45f),
-                                            offset = Offset(0f, 2f),
-                                            blurRadius = 3f
+                                            color = Color(0x40000000),
+                                            offset = Offset(0f, 1f),
+                                            blurRadius = 2f
                                         )
                                     )
                                 )
@@ -1149,7 +1158,9 @@ private fun QuickFooterChip(
         )
         Text(
             text = label,
-            style = MaterialTheme.typography.labelMedium,
+            fontFamily = NunitoBoldFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
             color = Color.White
         )
     }

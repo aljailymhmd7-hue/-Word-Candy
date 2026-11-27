@@ -165,7 +165,8 @@ data class GameProgress(
     val lastDailyRewardMs: Long = 0L,
     val activeBoardTheme: BoardTheme = BoardTheme.CANDY_CLASSIC,
     val ownedBoardThemes: Set<String> = setOf(BoardTheme.CANDY_CLASSIC.id),
-    val totalWordsFound: Int = 0
+    val totalWordsFound: Int = 0,
+    val adminGa4PropertyId: String = ""
 )
 
 val ALL_WORLDS = listOf(

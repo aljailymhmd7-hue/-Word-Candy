@@ -34,6 +34,7 @@ class ProgressRepository(private val context: Context) {
         val ACTIVE_BOARD_THEME = stringPreferencesKey("active_board_theme")
         val OWNED_BOARD_THEMES = stringPreferencesKey("owned_board_themes")
         val TOTAL_WORDS_FOUND = intPreferencesKey("total_words_found")
+        val GA4_PROPERTY_ID = stringPreferencesKey("ga4_property_id")
     }
 
     val progressFlow: Flow<GameProgress> = context.dataStore.data.map { prefs ->
@@ -79,7 +80,8 @@ class ProgressRepository(private val context: Context) {
             lastDailyRewardMs = prefs[Keys.LAST_DAILY_REWARD_MS] ?: 0L,
             activeBoardTheme = activeTheme,
             ownedBoardThemes = ownedThemes,
-            totalWordsFound = prefs[Keys.TOTAL_WORDS_FOUND] ?: 0
+            totalWordsFound = prefs[Keys.TOTAL_WORDS_FOUND] ?: 0,
+            adminGa4PropertyId = prefs[Keys.GA4_PROPERTY_ID] ?: ""
         )
     }
 
@@ -219,6 +221,12 @@ class ProgressRepository(private val context: Context) {
             }
         }
         return success
+    }
+
+    suspend fun setAdminGa4PropertyId(propertyId: String) {
+        context.dataStore.edit {
+            it[Keys.GA4_PROPERTY_ID] = propertyId.trim().removePrefix("properties/")
+        }
     }
 
     suspend fun resetAll() {

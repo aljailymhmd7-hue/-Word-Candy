@@ -30,11 +30,13 @@ object LocalizedStrings {
     fun levelBadge(lang: AppLanguage, level: Int) =
         if (lang == AppLanguage.EN) "LEVEL $level" else "NIVEAU $level"
 
-    fun findTheWords(lang: AppLanguage, level: Int) =
-        if (lang == AppLanguage.EN) "Level $level - Find the Words!" else "Niveau $level - Trouvez les Mots !"
+    fun findTheWords(lang: AppLanguage, level: Int, totalWords: Int) =
+        if (lang == AppLanguage.EN) "Level $level: Find $totalWords Words"
+        else "Niveau $level : Trouvez $totalWords Mots"
 
-    fun wordsFoundRatio(lang: AppLanguage, found: Int, total: Int, pct: Int) =
-        if (lang == AppLanguage.EN) "$found/$total WORDS FOUND - $pct%" else "$found/$total MOTS TROUVES - $pct%"
+    fun wordsFoundRatio(lang: AppLanguage, found: Int, total: Int) =
+        if (lang == AppLanguage.EN) "$found/$total WORDS FOUND"
+        else "$found/$total MOTS TROUVES"
 
     fun hintLeft(lang: AppLanguage, hints: Int) =
         if (lang == AppLanguage.EN) "HINT ($hints LEFT)" else "INDICE ($hints)"

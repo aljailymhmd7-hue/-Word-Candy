@@ -28,13 +28,12 @@ val LockedGray = Color(0xFFB8B2C8)
 val LockedGrayDark = Color(0xFF8C85A0)
 
 val TilePalette = listOf(
-    CandyPinkRed,
-    CandyBlue,
-    CandyGreenDark,
-    CandyOrange,
-    CandyPurple,
-    Color(0xFF00BFA5),
-    Color(0xFFE040FB)
+    Color(0xFF5B8DEF), // Blue
+    Color(0xFFFF6B6B), // Red
+    Color(0xFFA78BFA), // Purple
+    Color(0xFF2DD4BF), // Teal
+    Color(0xFFFB923C), // Orange
+    Color(0xFF4ADE80)  // Green
 )
 
 val RainbowColors = listOf(

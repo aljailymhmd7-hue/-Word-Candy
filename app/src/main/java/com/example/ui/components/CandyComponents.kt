@@ -84,6 +84,7 @@ import com.example.ui.theme.CandyOrange
 import com.example.ui.theme.CandyPinkRed
 import com.example.ui.theme.CandyPurple
 import com.example.ui.theme.CandyYellow
+import com.example.ui.theme.NunitoBoldFontFamily
 import com.example.ui.theme.RainbowColors
 import com.example.ui.theme.SurfaceDarkPurple
 import com.example.ui.theme.style
@@ -219,9 +220,11 @@ fun GlossyCandyButton(
             }
             Text(
                 text = text,
-                style = MaterialTheme.typography.titleLarge.copy(
-                    color = Color.White,
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontFamily = NunitoBoldFontFamily,
                     fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = Color.White,
                     shadow = Shadow(
                         color = Color.Black.copy(alpha = 0.35f),
                         offset = Offset(0f, 3f),

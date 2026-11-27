@@ -678,4 +678,197 @@ class WordSplashEngineTest {
             assertEquals("Direction failed for $testCase", testCase.expected, lastSelectedLine)
         }
     }
+
+    @Test
+    fun `progressive difficulty scales words 3 to 10, word lengths, grid sizes, and places words without overlap`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = LevelRepository(context)
+
+        val expectedCounts = mapOf(
+            1 to 3,
+            4 to 4,
+            7 to 5,
+            10 to 6,
+            13 to 7,
+            16 to 8,
+            19 to 9,
+            22 to 10,
+            50 to 10
+        )
+
+        expectedCounts.forEach { (levelNum, expectedCount) ->
+            val level = repo.getLevel(AppLanguage.EN, levelNum)
+            assertEquals("Word count mismatch at level $levelNum", expectedCount, level.words.size)
+
+            val expectedGrid = when {
+                expectedCount <= 4 -> 6
+                expectedCount <= 6 -> 7
+                expectedCount <= 8 -> 8
+                else -> 9
+            }
+            assertEquals("Grid size mismatch at level $levelNum", expectedGrid, level.gridSize)
+
+            val expectedLenRange = when {
+                levelNum <= 10 -> 3..4
+                levelNum <= 20 -> 5..5
+                else -> 5..8
+            }
+            level.words.forEach { word ->
+                assertTrue("Word $word out of range $expectedLenRange at level $levelNum", word.length in expectedLenRange)
+            }
+
+            // Every word placed on the generated board with ZERO overlapping coordinates
+            val board = WordGridGenerator.generate(level)
+            assertEquals(expectedCount, board.placements.size)
+            val seenCoords = mutableSetOf<GridCoord>()
+            board.placements.forEach { placement ->
+                placement.coords.forEach { coord ->
+                    assertTrue(
+                        "Overlapping coordinate $coord for word ${placement.word} at level $levelNum",
+                        seenCoords.add(coord)
+                    )
+                }
+                val spelled = placement.coords.joinToString("") { board.letters[it.row][it.col].toString() }
+                assertEquals(placement.word, spelled)
+            }
+        }
+    }
+
+    @Test
+    fun `words_5000 json asset contains 5000 unique clean uppercase words in expected buckets`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = LevelRepository(context)
+        val pools = repo.loadEnglishWordPools5000()
+
+        assertEquals(1500, pools.easy34.size)
+        assertEquals(1500, pools.medium5.size)
+        assertEquals(2000, pools.hard68.size)
+
+        assertTrue(pools.easy34.all { it.length in 3..4 && it.all { ch -> ch in 'A'..'Z' } })
+        assertTrue(pools.medium5.all { it.length == 5 && it.all { ch -> ch in 'A'..'Z' } })
+        assertTrue(pools.hard68.all { it.length in 6..8 && it.all { ch -> ch in 'A'..'Z' } })
+
+        val allUnique = (pools.easy34 + pools.medium5 + pools.hard68).toSet()
+        assertEquals(5000, allUnique.size)
+    }
+
+    @Test
+    fun `viewModel regenerates Level 1 with fresh random words and avoids repeating the last 5 sets`() = runTest {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val vm = com.example.ui.WordSplashViewModel(app)
+        val observedSets = mutableListOf<Set<String>>()
+
+        repeat(8) {
+            vm.startLevel(1)
+            val deadline = System.currentTimeMillis() + 3000L
+            var words: List<String>? = null
+            while (System.currentTimeMillis() < deadline) {
+                org.robolectric.shadows.ShadowLooper.idleMainLooper()
+                val gp = vm.uiState.value.gameplay
+                val currentWords = gp.levelData?.words
+                if (!gp.isLoading && currentWords != null && gp.board != null && currentWords.toSet() !in observedSets.takeLast(5)) {
+                    words = currentWords
+                    break
+                }
+                Thread.sleep(20)
+            }
+            assertNotNull("Timed out waiting for regenerated level 1", words)
+            assertEquals(3, words!!.size)
+            assertTrue(words.all { it.length in 3..4 })
+            val wordSet = words.toSet()
+            assertTrue(
+                "Word set $wordSet repeated within last 5 sets: ${observedSets.takeLast(5)}",
+                wordSet !in observedSets.takeLast(5)
+            )
+            observedSets.add(wordSet)
+        }
+        vm.stopTimer()
+    }
+
+    @Test
+    fun `nine by nine grid reliably places all 10 hard words without overlapping cells`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = LevelRepository(context)
+        val pools = repo.loadEnglishWordPools5000()
+        val combinedHardPool = pools.hard68 + pools.medium5
+
+        repeat(100) { iter ->
+            val words = combinedHardPool.shuffled(kotlin.random.Random(iter.toLong() + 12345L)).take(10)
+            val levelData = com.example.model.LevelData(
+                level = 25 + iter,
+                theme = "Hard Mix",
+                words = words,
+                gridSize = 9,
+                world = "WORLD",
+                difficulty = "Hard",
+                colorsHex = emptyList()
+            )
+            val board = WordGridGenerator.generate(levelData, seedOffset = iter)
+            assertEquals(9, board.gridSize)
+            assertEquals("Failed to place all 10 words on 9x9 at iter $iter", 10, board.placements.size)
+            val seen = mutableSetOf<GridCoord>()
+            board.placements.forEach { placement ->
+                placement.coords.forEach { coord ->
+                    assertTrue("Overlap at $coord on iter $iter", seen.add(coord))
+                }
+                val spelled = placement.coords.joinToString("") { board.letters[it.row][it.col].toString() }
+                assertEquals(placement.word, spelled)
+            }
+        }
+    }
+
+    @Test
+    fun `gameplay header shows Level X Find Y Words and 0 over Y WORDS FOUND counter`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = LevelRepository(context)
+        val level22 = repo.getLevel(AppLanguage.EN, 22)
+
+        val engine = WordSplashGameEngine()
+        engine.startLevel(level22, previouslyUnlockedLevel = 22)
+        val uiState = GameplayUiState(
+            levelData = engine.state.levelData,
+            board = engine.state.board,
+            foundWords = emptySet(),
+            isLoading = false
+        )
+
+        composeRule.setContent {
+            WordSplashTheme {
+                GameplayScreen(
+                    progress = GameProgress(language = AppLanguage.EN),
+                    gameplay = uiState,
+                    onDragStart = {},
+                    onDragMove = {},
+                    onDragEnd = {},
+                    onUseHint = {},
+                    onUseWordHint = {},
+                    onShuffle = {},
+                    onToggleLanguage = {},
+                    onNavigateHome = {},
+                    onNavigateLevels = {},
+                    onNavigateSettings = {}
+                )
+            }
+        }
+
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Level 22: Find 10 Words").assertIsDisplayed()
+        composeRule.onNodeWithText("0/10 WORDS FOUND").assertIsDisplayed()
+    }
+
+    @Test
+    fun `nunito black and bold fonts and exact six tile colors are configured`() {
+        val expectedColors = listOf(
+            androidx.compose.ui.graphics.Color(0xFF5B8DEF),
+            androidx.compose.ui.graphics.Color(0xFFFF6B6B),
+            androidx.compose.ui.graphics.Color(0xFFA78BFA),
+            androidx.compose.ui.graphics.Color(0xFF2DD4BF),
+            androidx.compose.ui.graphics.Color(0xFFFB923C),
+            androidx.compose.ui.graphics.Color(0xFF4ADE80)
+        )
+        assertEquals(expectedColors, com.example.ui.theme.TilePalette)
+        assertTrue(R.font.nunito_black != 0)
+        assertTrue(R.font.nunito_bold != 0)
+        assertTrue(R.font.nunito_font != 0)
+    }
 }

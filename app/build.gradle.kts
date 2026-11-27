@@ -3,11 +3,12 @@ plugins {
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.secrets)
+  alias(libs.plugins.google.services)
 }
 
 android {
   namespace = "com.example"
-  compileSdk = 33
+  compileSdk = 36
 
   val githubRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
   val propVersionCode = project.findProperty("versionCode")?.toString()?.toIntOrNull()
@@ -79,10 +80,8 @@ secrets {
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
 }
 
-// Alternative app stores (Amazon Appstore / Uptodown): exclude all Google Play Services
-// and Google Play Billing artifacts so Unity Ads runs cleanly without GMS.
+// Exclude Google Play Billing artifacts; allow GMS measurement needed by Firebase Analytics.
 configurations.configureEach {
-  exclude(group = "com.google.android.gms")
   exclude(group = "com.android.billingclient")
   resolutionStrategy.force("androidx.emoji2:emoji2:1.3.0")
 }
@@ -91,7 +90,8 @@ configurations.configureEach {
 // This makes it easy to add them back in the future if needed.
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
-  // implementation(platform(libs.firebase.bom))
+  implementation(platform(libs.firebase.bom))
+  implementation(libs.firebase.analytics)
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   // implementation(libs.androidx.camera.camera2)
@@ -133,7 +133,8 @@ dependencies {
   }
   // implementation(libs.logging.interceptor)
   // implementation(libs.moshi.kotlin)
-  // implementation(libs.okhttp)
+  implementation(libs.okhttp)
+  implementation(libs.play.services.auth)
   // implementation(libs.play.services.location)
   // implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)

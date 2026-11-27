@@ -13,10 +13,19 @@ val FredokaFontFamily = FontFamily(
     Font(R.font.fredoka, FontWeight.Bold)
 )
 
+val NunitoBoldFontFamily = FontFamily(
+    Font(R.font.nunito_bold, FontWeight.Bold)
+)
+
+val NunitoBlackFontFamily = FontFamily(
+    Font(R.font.nunito_black, FontWeight.Black)
+)
+
 val NunitoFontFamily = FontFamily(
     Font(R.font.nunito, FontWeight.Normal),
-    Font(R.font.nunito, FontWeight.SemiBold),
-    Font(R.font.nunito, FontWeight.Bold)
+    Font(R.font.nunito_bold, FontWeight.SemiBold),
+    Font(R.font.nunito_bold, FontWeight.Bold),
+    Font(R.font.nunito_black, FontWeight.Black)
 )
 
 val WordSplashTypography = Typography(
@@ -39,20 +48,20 @@ val WordSplashTypography = Typography(
         lineHeight = 28.sp
     ),
     titleLarge = TextStyle(
-        fontFamily = FredokaFontFamily,
-        fontWeight = FontWeight.Bold,
-        fontSize = 20.sp,
-        lineHeight = 24.sp
+        fontFamily = NunitoBlackFontFamily,
+        fontWeight = FontWeight.Black,
+        fontSize = 22.sp,
+        lineHeight = 26.sp
     ),
     titleMedium = TextStyle(
-        fontFamily = NunitoFontFamily,
+        fontFamily = NunitoBoldFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 16.sp,
         lineHeight = 22.sp
     ),
     bodyLarge = TextStyle(
-        fontFamily = NunitoFontFamily,
-        fontWeight = FontWeight.SemiBold,
+        fontFamily = NunitoBoldFontFamily,
+        fontWeight = FontWeight.Bold,
         fontSize = 16.sp,
         lineHeight = 22.sp
     ),
@@ -63,15 +72,15 @@ val WordSplashTypography = Typography(
         lineHeight = 20.sp
     ),
     labelLarge = TextStyle(
-        fontFamily = FredokaFontFamily,
+        fontFamily = NunitoBoldFontFamily,
         fontWeight = FontWeight.Bold,
-        fontSize = 15.sp,
-        lineHeight = 18.sp
+        fontSize = 16.sp,
+        lineHeight = 20.sp
     ),
     labelMedium = TextStyle(
-        fontFamily = NunitoFontFamily,
+        fontFamily = NunitoBoldFontFamily,
         fontWeight = FontWeight.Bold,
-        fontSize = 12.sp,
-        lineHeight = 16.sp
+        fontSize = 14.sp,
+        lineHeight = 18.sp
     )
 )

@@ -49,6 +49,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.ads.UnityAdsManager
 import com.example.ads.UnityBannerAdBar
+import com.example.analytics.FirebaseAnalyticsTracker
 import com.example.audio.LocalHaptics
 import com.example.audio.LocalSoundEffects
 import com.example.model.LocalizedStrings
@@ -56,6 +57,7 @@ import com.example.ui.WordSplashViewModel
 import com.example.ui.components.BottomCandyNavBar
 import com.example.ui.components.CandyGradientBackground
 import com.example.ui.components.CandyNavItem
+import com.example.ui.screens.AdminDashboardScreen
 import com.example.ui.screens.CollectionsScreen
 import com.example.ui.screens.GameplayScreen
 import com.example.ui.screens.HomeScreen
@@ -65,6 +67,9 @@ import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.ShopScreen
 import com.example.ui.screens.WinScreen
 import com.example.ui.theme.WordSplashTheme
+import com.google.firebase.Firebase
+import com.google.firebase.analytics.FirebaseAnalytics
+import com.google.firebase.analytics.analytics
 
 const val ROUTE_HOME = "home"
 const val ROUTE_LEVEL_MAP = "level_map"
@@ -72,19 +77,48 @@ const val ROUTE_GAMEPLAY = "gameplay"
 const val ROUTE_SHOP = "shop"
 const val ROUTE_COLLECTIONS = "collections"
 const val ROUTE_SETTINGS = "settings"
+const val ROUTE_ADMIN_DASHBOARD = "admin_dashboard"
 
 class MainActivity : ComponentActivity() {
+    private lateinit var analytics: FirebaseAnalytics
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
+
+        FirebaseAnalyticsTracker.initialize(applicationContext)
+        analytics = Firebase.analytics
+        analytics.setAnalyticsCollectionEnabled(true)
+        // Auto track install and app open
+        analytics.logEvent(FirebaseAnalytics.Event.APP_OPEN, null)
+        analytics.logEvent("app_installed", Bundle().apply {
+            putString("level", "Level 1")
+            putLong("timestamp", System.currentTimeMillis())
+        })
+        // app_remove tracking is automatic; also log install count event
+        analytics.logEvent("app_install_count", null)
+
         UnityAdsManager.initialize(this)
         setContent {
             WordSplashTheme {
                 WordSplashApp()
             }
         }
+    }
+
+    fun trackLevelDownload(levelNumber: Int) {
+        analytics.logEvent("level_download", Bundle().apply {
+            putString("level_name", "Level $levelNumber")
+            putInt("level_id", levelNumber)
+        })
+    }
+
+    fun trackLevelComplete(levelNumber: Int) {
+        analytics.logEvent(FirebaseAnalytics.Event.LEVEL_UP, Bundle().apply {
+            putInt(FirebaseAnalytics.Param.LEVEL, levelNumber)
+        })
     }
 
     override fun onResume() {
@@ -271,7 +305,28 @@ fun WordSplashApp(
                             onToggleLanguage = { viewModel.toggleLanguage() },
                             onSetSoundEnabled = { viewModel.setSoundEnabled(it) },
                             onSetHapticsEnabled = { viewModel.setHapticsEnabled(it) },
-                            onResetProgress = { viewModel.resetProgress() }
+                            onResetProgress = { viewModel.resetProgress() },
+                            onOpenAdminDashboard = {
+                                navController.navigate(ROUTE_ADMIN_DASHBOARD) {
+                                    launchSingleTop = true
+                                }
+                            }
+                        )
+                    }
+
+                    composable(ROUTE_ADMIN_DASHBOARD) {
+                        AdminDashboardScreen(
+                            state = state.adminDashboard,
+                            onAuthorizingChanged = { viewModel.setAdminAuthorizing(it) },
+                            onAccessTokenReceived = { viewModel.onAdminAccessTokenReceived(it) },
+                            onAuthError = { viewModel.onAdminAuthError(it) },
+                            onPropertyIdChanged = { viewModel.onAdminPropertyIdChanged(it) },
+                            onSelectProperty = { viewModel.onAdminSelectProperty(it) },
+                            onSelectDateRange = { viewModel.onAdminSelectDateRange(it) },
+                            onFetchReport = { viewModel.fetchAdminAnalyticsReport() },
+                            onNavigateBack = {
+                                navController.popBackStack()
+                            }
                         )
                     }
                 }
@@ -320,17 +375,20 @@ fun WordSplashApp(
                 }
             }
 
-            Box(
-                modifier = if (currentRoute == ROUTE_GAMEPLAY) {
-                    Modifier.windowInsetsPadding(WindowInsets.navigationBars)
-                } else {
-                    Modifier
+            val showBottomChrome = currentRoute != ROUTE_GAMEPLAY && currentRoute != ROUTE_ADMIN_DASHBOARD
+            if (currentRoute != ROUTE_ADMIN_DASHBOARD) {
+                Box(
+                    modifier = if (currentRoute == ROUTE_GAMEPLAY) {
+                        Modifier.windowInsetsPadding(WindowInsets.navigationBars)
+                    } else {
+                        Modifier
+                    }
+                ) {
+                    UnityBannerAdBar(adsStatus = adsStatus)
                 }
-            ) {
-                UnityBannerAdBar(adsStatus = adsStatus)
             }
 
-            if (currentRoute != ROUTE_GAMEPLAY) {
+            if (showBottomChrome) {
                 BottomCandyNavBar(
                     items = navItems,
                     selectedRoute = currentRoute,

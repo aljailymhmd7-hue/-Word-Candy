@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.example.ads.UnityAdsManager
@@ -70,16 +71,17 @@ class UnityAdsHttpClientTest {
     }
 
     @Test
-    fun `banner uses BP_Banner_Android primary with Banner_Android fallback, 1s init delay, and 30s retry on NO_FILL`() {
-        assertEquals("BP_Banner_Android", UnityAdsManager.BANNER_PLACEMENT)
+    fun `banner uses BP_Banner_Android primary with Banner_Android fallback, 2s init delay, and 30s retry on NO_FILL`() {
+        assertEquals("Banner_Android", UnityAdsManager.BANNER_PLACEMENT)
         assertEquals(listOf("BP_Banner_Android", "Banner_Android"), UnityAdsManager.BANNER_PLACEMENT_CANDIDATES)
-        assertEquals(1_000L, UnityAdsManager.BANNER_INIT_DELAY_MS)
+        assertEquals(2_000L, UnityAdsManager.BANNER_INIT_DELAY_MS)
+        assertEquals(5_000L, UnityAdsManager.BANNER_FALLBACK_TIMEOUT_MS)
         assertEquals(30_000L, UnityAdsManager.BANNER_NO_FILL_RETRY_DELAY_MS)
 
         var fallbackInvoked = 0
         UnityAdsManager.handleBannerLoadFailure(
             placementId = "BP_Banner_Android",
-            errorCode = com.unity3d.services.banners.BannerErrorCode.NATIVE_ERROR,
+            errorCode = BannerErrorCode.NATIVE_ERROR,
             errorMessage = "Placement not found",
             onFallbackNextPlacement = { fallbackInvoked++ }
         )
@@ -97,11 +99,12 @@ class UnityAdsHttpClientTest {
 
         assertEquals(30_000L, scheduledDelayMs)
         assertEquals(false, UnityAdsManager.status.value.isBannerReady)
+        assertTrue(UnityAdsManager.status.value.showBannerFallbackText)
         assertTrue(UnityAdsManager.status.value.lastError.orEmpty().contains("NO_FILL"))
     }
 
     @Test
-    fun `banner ad renders with 50dp height at bottom of level map and gameplay screens without overlapping buttons`() {
+    fun `banner ad renders 60dp black bar at bottom of gameplay screen without overlapping buttons`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val repo = LevelRepository(context)
         val level4 = runBlocking { repo.getLevel(AppLanguage.EN, 4) }
@@ -149,16 +152,19 @@ class UnityAdsHttpClientTest {
         val shuffleBounds = composeRule.onNodeWithTag("shuffle_button").assertIsDisplayed().getUnclippedBoundsInRoot()
 
         val bannerHeightDp = (bannerBounds.bottom - bannerBounds.top).value
-        assertEquals(50f, bannerHeightDp, 0.5f)
+        assertEquals(60f, bannerHeightDp, 0.5f)
         assertTrue(bannerBounds.top >= hintBounds.bottom - 0.5.dp)
         assertTrue(bannerBounds.top >= shuffleBounds.bottom - 0.5.dp)
     }
 
     @Test
-    fun `banner ad stays visible at bottom of level map screen`() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val adsStatus = UnityAdsStatus(isConfigured = true, isInitialized = true, isBannerReady = true)
-        val fakeBannerView = View(context)
+    fun `banner ad black bar stays visible at bottom of level map screen and displays Advertisement fallback when ad fails`() {
+        val adsStatus = UnityAdsStatus(
+            isConfigured = true,
+            isInitialized = true,
+            isBannerReady = false,
+            showBannerFallbackText = true
+        )
 
         composeRule.setContent {
             WordSplashTheme {
@@ -172,7 +178,7 @@ class UnityAdsHttpClientTest {
                     }
                     UnityBannerAdBar(
                         adsStatus = adsStatus,
-                        bannerViewProvider = { fakeBannerView }
+                        bannerViewProvider = { null }
                     )
                 }
             }
@@ -186,7 +192,8 @@ class UnityAdsHttpClientTest {
             .assertIsDisplayed()
             .getUnclippedBoundsInRoot()
 
-        assertEquals(50f, (bannerBounds.bottom - bannerBounds.top).value, 0.5f)
+        assertEquals(60f, (bannerBounds.bottom - bannerBounds.top).value, 0.5f)
         assertTrue(bannerBounds.top >= playButtonBounds.bottom - 0.5.dp)
+        composeRule.onNodeWithText("Advertisement").assertIsDisplayed()
     }
 }

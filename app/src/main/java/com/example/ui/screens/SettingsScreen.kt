@@ -41,7 +41,10 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.audio.LocalSoundEffects
 import com.example.model.AppLanguage
 import com.example.model.GameProgress
@@ -60,11 +63,13 @@ fun SettingsScreen(
     onSetSoundEnabled: (Boolean) -> Unit,
     onSetHapticsEnabled: (Boolean) -> Unit,
     onResetProgress: () -> Unit,
+    onOpenAdminDashboard: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val lang = progress.language
     val sfx = LocalSoundEffects.current
     var showResetDialog by remember { mutableStateOf(false) }
+    var versionTapCount by remember { mutableStateOf(0) }
 
     Column(
         modifier = modifier
@@ -172,6 +177,30 @@ fun SettingsScreen(
                     color = CandyPinkRed
                 )
             }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text(
+                text = "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                fontSize = 12.sp,
+                color = Color.White.copy(alpha = 0.55f),
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable {
+                        val next = versionTapCount + 1
+                        if (next >= 5) {
+                            versionTapCount = 0
+                            sfx?.playClick()
+                            onOpenAdminDashboard()
+                        } else {
+                            versionTapCount = next
+                        }
+                    }
+                    .padding(vertical = 12.dp)
+                    .testTag("settings_version_admin_trigger")
+            )
         }
     }
 

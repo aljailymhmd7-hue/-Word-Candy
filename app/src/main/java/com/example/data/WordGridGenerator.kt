@@ -43,13 +43,14 @@ object WordGridGenerator {
             .filter { it.isNotEmpty() && it.length <= size }
             .sortedByDescending { it.length }
 
-        for (attempt in 0 until 45) {
+        for (attempt in 0 until 120) {
             val grid = Array(size) { CharArray(size) { ' ' } }
             val placements = mutableListOf<WordPlacement>()
             var allPlaced = true
 
-            val activeDirs = if (attempt < 25) directions else allDirections
-            for ((idx, word) in sortedWords.withIndex()) {
+            val activeDirs = if (attempt < 55) directions else allDirections
+            val wordOrder = if (attempt < 40) sortedWords else sortedWords.shuffled(random)
+            for ((idx, word) in wordOrder.withIndex()) {
                 val placedCoords = tryPlaceWord(grid, word, activeDirs, random)
                 if (placedCoords == null) {
                     allPlaced = false
@@ -69,19 +70,64 @@ object WordGridGenerator {
             }
         }
 
-        // Guaranteed deterministic fallback: horizontal / vertical non-overlapping rows
+        // Guaranteed deterministic fallback with zero overlap:
+        // - When words.size <= gridSize: 1 horizontal word per row.
+        // - When words.size == gridSize + 1 (e.g. 10 words of max 8 letters on 9x9):
+        //   1 word vertically in the last column + gridSize horizontal words in columns 0..(gridSize - 2).
         val fallbackGrid = Array(size) { CharArray(size) { ' ' } }
         val fallbackPlacements = mutableListOf<WordPlacement>()
-        sortedWords.forEachIndexed { idx, word ->
-            val row = idx % size
-            val colStart = if (word.length < size) (idx * 2) % (size - word.length + 1) else 0
-            val coords = mutableListOf<GridCoord>()
-            for (i in word.indices) {
-                val c = (colStart + i).coerceAtMost(size - 1)
-                fallbackGrid[row][c] = word[i]
-                coords.add(GridCoord(row, c))
+        if (sortedWords.size <= size) {
+            sortedWords.forEachIndexed { idx, word ->
+                val row = idx
+                val maxStart = (size - word.length).coerceAtLeast(0)
+                val colStart = if (maxStart > 0) random.nextInt(maxStart + 1) else 0
+                val coords = ArrayList<GridCoord>(word.length)
+                for (i in word.indices) {
+                    val c = colStart + i
+                    fallbackGrid[row][c] = word[i]
+                    coords.add(GridCoord(row, c))
+                }
+                fallbackPlacements.add(WordPlacement(word, coords, idx % paletteSize))
             }
-            fallbackPlacements.add(WordPlacement(word, coords, idx % paletteSize))
+        } else {
+            val colWordIndex = sortedWords.indexOfLast { it.length <= size }
+            var rowIdx = 0
+            val placedIndices = mutableSetOf<Int>()
+            if (colWordIndex >= 0 && sortedWords.count { it.length <= size - 1 } >= sortedWords.size - 1) {
+                val colWord = sortedWords[colWordIndex]
+                val lastCol = size - 1
+                val colCoords = ArrayList<GridCoord>(colWord.length)
+                for (r in colWord.indices) {
+                    fallbackGrid[r][lastCol] = colWord[r]
+                    colCoords.add(GridCoord(r, lastCol))
+                }
+                fallbackPlacements.add(WordPlacement(colWord, colCoords, colWordIndex % paletteSize))
+                placedIndices.add(colWordIndex)
+
+                for ((idx, word) in sortedWords.withIndex()) {
+                    if (idx in placedIndices) continue
+                    if (rowIdx < size && word.length <= size - 1) {
+                        val rowCoords = ArrayList<GridCoord>(word.length)
+                        for (c in word.indices) {
+                            fallbackGrid[rowIdx][c] = word[c]
+                            rowCoords.add(GridCoord(rowIdx, c))
+                        }
+                        fallbackPlacements.add(WordPlacement(word, rowCoords, idx % paletteSize))
+                        placedIndices.add(idx)
+                        rowIdx++
+                    }
+                }
+            }
+
+            sortedWords.forEachIndexed { idx, word ->
+                if (idx !in placedIndices) {
+                    val placed = tryPlaceWord(fallbackGrid, word, listOf(0 to 1, 1 to 0, 0 to -1, -1 to 0), random)
+                        ?: tryPlaceWord(fallbackGrid, word, allDirections, random)
+                    if (placed != null) {
+                        fallbackPlacements.add(WordPlacement(word, placed, idx % paletteSize))
+                    }
+                }
+            }
         }
         return finalizeBoard(size, fallbackGrid, fallbackPlacements, random, paletteSize)
     }
@@ -274,7 +320,7 @@ object WordGridGenerator {
                         val cr = r + dr * i
                         val cc = c + dc * i
                         val existing = grid[cr][cc]
-                        if (existing != ' ' && existing != word[i]) {
+                        if (existing != ' ') {
                             fits = false
                             break
                         }
