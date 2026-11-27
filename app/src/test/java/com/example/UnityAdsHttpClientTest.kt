@@ -70,13 +70,26 @@ class UnityAdsHttpClientTest {
     }
 
     @Test
-    fun `banner uses Banner_Android placement, 1s init delay, and 30s retry on NO_FILL`() {
-        assertEquals("Banner_Android", UnityAdsManager.BANNER_PLACEMENT)
+    fun `banner uses BP_Banner_Android primary with Banner_Android fallback, 1s init delay, and 30s retry on NO_FILL`() {
+        assertEquals("BP_Banner_Android", UnityAdsManager.BANNER_PLACEMENT)
+        assertEquals(listOf("BP_Banner_Android", "Banner_Android"), UnityAdsManager.BANNER_PLACEMENT_CANDIDATES)
         assertEquals(1_000L, UnityAdsManager.BANNER_INIT_DELAY_MS)
         assertEquals(30_000L, UnityAdsManager.BANNER_NO_FILL_RETRY_DELAY_MS)
 
+        var fallbackInvoked = 0
+        UnityAdsManager.handleBannerLoadFailure(
+            placementId = "BP_Banner_Android",
+            errorCode = com.unity3d.services.banners.BannerErrorCode.NATIVE_ERROR,
+            errorMessage = "Placement not found",
+            onFallbackNextPlacement = { fallbackInvoked++ }
+        )
+        assertEquals(1, fallbackInvoked)
+        assertEquals("Banner_Android", UnityAdsManager.currentBannerPlacement())
+        assertEquals(false, UnityAdsManager.status.value.isPlacementMissing)
+
         var scheduledDelayMs: Long? = null
         UnityAdsManager.handleBannerLoadFailure(
+            placementId = "Banner_Android",
             errorCode = BannerErrorCode.NO_FILL,
             errorMessage = "No fill",
             scheduleRetry = { delay -> scheduledDelayMs = delay }

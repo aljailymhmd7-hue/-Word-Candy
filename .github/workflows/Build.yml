@@ -16,10 +16,12 @@ jobs:
       - name: make keystore
         run: |
           echo '{"project_info":{"project_number":"123","project_id":"dummy"},"client":[{"client_info":{"mobilesdk_app_id":"1:123:android:dummy","android_client_info":{"package_name":"com.elgaily.wordcandy"}},"oauth_client":[],"api_key":[{"current_key":"dummy"}],"services":{}}]}' > app/google-services.json
-          keytool -genkey -v -keystore app/my-upload-key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload -storepass upload123456 -keypass upload123456 -dname "CN=WordCandy" -noprompt
+          if [ ! -f my-upload-key.jks ]; then
+            keytool -genkey -v -keystore my-upload-key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias upload -storepass upload123456 -keypass upload123456 -dname "CN=WordCandy" -noprompt
+          fi
+          cp my-upload-key.jks app/my-upload-key.jks
           mkdir -p app/app
-          cp app/my-upload-key.jks app/app/my-upload-key.jks
-          cp app/my-upload-key.jks my-upload-key.jks
+          cp my-upload-key.jks app/app/my-upload-key.jks
 
       - name: build apk
         env:

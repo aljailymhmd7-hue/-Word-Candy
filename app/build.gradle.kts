@@ -9,12 +9,16 @@ android {
   namespace = "com.example"
   compileSdk = 33
 
+  val githubRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+  val propVersionCode = project.findProperty("versionCode")?.toString()?.toIntOrNull()
+  val propVersionName = (project.findProperty("versionName") as? String)?.takeIf { it.isNotBlank() }
+
   defaultConfig {
     applicationId = "com.elgaily.wordcandy"
     minSdk = 24
     targetSdk = 33
-    versionCode = project.findProperty("versionCode")?.toString()?.toIntOrNull() ?: 1
-    versionName = project.findProperty("versionName") as? String ?: "1.0.0"
+    versionCode = propVersionCode ?: githubRunNumber ?: 1
+    versionName = propVersionName ?: githubRunNumber?.let { "1.0.$it" } ?: "1.0.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
