@@ -9,14 +9,18 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.WebView
 import android.widget.FrameLayout
+import android.widget.RelativeLayout
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,7 +43,6 @@ import com.unity3d.services.banners.BannerErrorInfo
 import com.unity3d.services.banners.BannerView
 import com.unity3d.services.banners.IUnityBannerListener
 import com.unity3d.services.banners.UnityBannerSize
-import com.unity3d.services.banners.UnityBanners
 import com.unity3d.services.core.properties.ClientProperties
 import java.lang.ref.WeakReference
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -137,7 +140,6 @@ object UnityAdsManager {
 
     fun initialize(context: Context) {
         findActivity(context)?.let { activityRef = WeakReference(it) }
-        UnityBanners.setBannerListener(unityBannerListener)
 
         _status.update {
             it.copy(
@@ -242,6 +244,9 @@ object UnityAdsManager {
 
     fun onActivityResumed(activity: Activity) {
         activityRef = WeakReference(activity)
+        bannerView?.let { bv ->
+            ensureBannerLaidOut(bv)
+        }
         if (UnityAds.isInitialized) {
             if (!isBannerInitDelayPending &&
                 !_status.value.isBannerReady &&
@@ -274,7 +279,6 @@ object UnityAdsManager {
                     (bv.parent as? ViewGroup)?.removeView(bv)
                     bv.destroy()
                 }
-                runCatching { UnityBanners.destroy() }
                 bannerView = null
                 bannerActivityRef = null
                 _status.update {
@@ -282,6 +286,29 @@ object UnityAdsManager {
                         isBannerReady = false,
                         bannerViewEpoch = it.bannerViewEpoch + 1
                     )
+                }
+            }
+        }
+    }
+
+    fun onBannerViewDetached(detachedView: View) {
+        runOnMainThread {
+            if (detachedView === bannerView) {
+                Log.d(BANNER_LOG_TAG, "Active BannerView detached from window; resetting for clean reload")
+                mainHandler.removeCallbacks(bannerRetryRunnable)
+                isBannerLoading = false
+                bannerView?.destroy()
+                bannerView = null
+                bannerActivityRef = null
+                _status.update {
+                    it.copy(
+                        isBannerReady = false,
+                        bannerViewEpoch = it.bannerViewEpoch + 1
+                    )
+                }
+                val active = activityRef?.get()
+                if (active != null && !active.isFinishing && !active.isDestroyed && UnityAds.isInitialized) {
+                    mainHandler.post(bannerRetryRunnable)
                 }
             }
         }
@@ -296,7 +323,6 @@ object UnityAdsManager {
                 return@runOnMainThread
             }
             mainHandler.removeCallbacks(bannerRetryRunnable)
-            UnityBanners.setBannerListener(unityBannerListener)
 
             val activePlacement = currentBannerPlacement()
             val existingOwner = bannerActivityRef?.get()
@@ -324,6 +350,18 @@ object UnityAdsManager {
                 UnityBannerSize(320, 50)
             ).also { created ->
                 createdNewView = true
+                created.visibility = View.VISIBLE
+                created.setOnHierarchyChangeListener(object : ViewGroup.OnHierarchyChangeListener {
+                    override fun onChildViewAdded(parent: View?, child: View?) {
+                        if (child != null) {
+                            configureBannerChildView(child)
+                        }
+                        ensureBannerLaidOut(created)
+                        mainHandler.postDelayed({ ensureBannerLaidOut(created) }, 120L)
+                    }
+
+                    override fun onChildViewRemoved(parent: View?, child: View?) = Unit
+                })
                 created.listener = object : BannerView.Listener() {
                     override fun onBannerLoaded(bannerAdView: BannerView?) {
                         runOnMainThread {
@@ -339,13 +377,22 @@ object UnityAdsManager {
                                     lastError = null
                                 )
                             }
+                            bannerAdView?.let { adView ->
+                                ensureBannerLaidOut(adView)
+                                mainHandler.postDelayed({ ensureBannerLaidOut(adView) }, 120L)
+                            }
                             unityBannerListener.onUnityBannerLoaded(activePlacement, bannerAdView)
                         }
                     }
 
                     override fun onBannerShown(bannerAdView: BannerView?) {
                         runOnMainThread {
-                            bannerAdView?.visibility = View.VISIBLE
+                            bannerAdView?.let { adView ->
+                                adView.visibility = View.VISIBLE
+                                adView.alpha = 1f
+                                ensureBannerLaidOut(adView)
+                                mainHandler.postDelayed({ ensureBannerLaidOut(adView) }, 120L)
+                            }
                             Log.i(BANNER_LOG_TAG, "Banner SHOWN for placement $activePlacement")
                             unityBannerListener.onUnityBannerShow(activePlacement)
                         }
@@ -385,6 +432,89 @@ object UnityAdsManager {
             Log.d(BANNER_LOG_TAG, "Trying to load $activePlacement, init=${UnityAds.isInitialized}")
             bv.load()
         }
+    }
+
+    internal fun configureBannerChildView(child: View) {
+        child.visibility = View.VISIBLE
+        child.alpha = 1f
+        val lp = child.layoutParams
+        if (lp == null || lp.width <= 0 || lp.height <= 0) {
+            child.layoutParams = RelativeLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+        if (child is WebView) {
+            runCatching {
+                child.onResume()
+                child.resumeTimers()
+            }
+        } else if (child is ViewGroup) {
+            for (i in 0 until child.childCount) {
+                configureBannerChildView(child.getChildAt(i))
+            }
+        }
+    }
+
+    private var lastTargetWidthPx: Int = 0
+    private var lastTargetHeightPx: Int = 0
+
+    internal fun ensureBannerLaidOut(
+        view: View,
+        targetWidthPx: Int = 0,
+        targetHeightPx: Int = 0
+    ) {
+        if (targetWidthPx > 0) lastTargetWidthPx = targetWidthPx
+        if (targetHeightPx > 0) lastTargetHeightPx = targetHeightPx
+        val effectiveTargetWidth = if (targetWidthPx > 0) targetWidthPx else lastTargetWidthPx
+        val effectiveTargetHeight = if (targetHeightPx > 0) targetHeightPx else lastTargetHeightPx
+
+        view.visibility = View.VISIBLE
+        view.alpha = 1f
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                configureBannerChildView(view.getChildAt(i))
+            }
+        }
+        view.requestLayout()
+        view.invalidate()
+
+        mainHandler.post {
+            performBannerLayoutPass(view, effectiveTargetWidth, effectiveTargetHeight)
+        }
+        if (view.isAttachedToWindow) {
+            view.post {
+                performBannerLayoutPass(view, effectiveTargetWidth, effectiveTargetHeight)
+            }
+        }
+    }
+
+    private fun performBannerLayoutPass(
+        view: View,
+        targetWidthPx: Int,
+        targetHeightPx: Int
+    ) {
+        val width = if (view.width > 0) view.width else targetWidthPx
+        val height = if (view.height > 0) view.height else targetHeightPx
+        if (width > 0 && height > 0) {
+            var needsManualLayout = view.width != width || view.height != height
+            if (!needsManualLayout && view is ViewGroup) {
+                for (i in 0 until view.childCount) {
+                    val child = view.getChildAt(i)
+                    if (child.width <= 0 || child.height <= 0) {
+                        needsManualLayout = true
+                        break
+                    }
+                }
+            }
+            if (needsManualLayout) {
+                val wSpec = View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY)
+                val hSpec = View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)
+                view.measure(wSpec, hSpec)
+                view.layout(view.left, view.top, view.left + width, view.top + height)
+            }
+        }
+        view.invalidate()
     }
 
     internal fun handleBannerLoadFailure(
@@ -726,7 +856,12 @@ fun UnityBannerAdBar(
 
     DisposableEffect(bannerView) {
         onDispose {
-            (bannerView?.parent as? ViewGroup)?.removeView(bannerView)
+            if (bannerView != null) {
+                (bannerView.parent as? ViewGroup)?.removeView(bannerView)
+                if (bannerView === UnityAdsManager.getBannerView()) {
+                    UnityAdsManager.onBannerViewDetached(bannerView)
+                }
+            }
         }
     }
 
@@ -739,42 +874,45 @@ fun UnityBannerAdBar(
         contentAlignment = Alignment.Center
     ) {
         if (bannerView != null) {
-            AndroidView(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp),
-                factory = { ctx ->
-                    FrameLayout(ctx).apply {
-                        (bannerView.parent as? ViewGroup)?.removeView(bannerView)
+            key(adsStatus.bannerViewEpoch) {
+                AndroidView(
+                    modifier = Modifier
+                        .width(320.dp)
+                        .height(50.dp),
+                    factory = { ctx ->
+                        FrameLayout(ctx).apply {
+                            layoutParams = ViewGroup.LayoutParams(bannerWidthPx, bannerHeightPx)
+                            (bannerView.parent as? ViewGroup)?.removeView(bannerView)
+                            bannerView.visibility = View.VISIBLE
+                            addView(
+                                bannerView,
+                                FrameLayout.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    Gravity.CENTER
+                                )
+                            )
+                            UnityAdsManager.ensureBannerLaidOut(bannerView, bannerWidthPx, bannerHeightPx)
+                        }
+                    },
+                    update = { container ->
                         bannerView.visibility = View.VISIBLE
-                        addView(
-                            bannerView,
-                            FrameLayout.LayoutParams(
-                                bannerWidthPx,
-                                bannerHeightPx,
-                                Gravity.CENTER
+                        if (bannerView.parent !== container) {
+                            (bannerView.parent as? ViewGroup)?.removeView(bannerView)
+                            container.removeAllViews()
+                            container.addView(
+                                bannerView,
+                                FrameLayout.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    Gravity.CENTER
+                                )
                             )
-                        )
-                        bannerView.requestLayout()
+                        }
+                        UnityAdsManager.ensureBannerLaidOut(bannerView, bannerWidthPx, bannerHeightPx)
                     }
-                },
-                update = { container ->
-                    bannerView.visibility = View.VISIBLE
-                    if (bannerView.parent !== container) {
-                        (bannerView.parent as? ViewGroup)?.removeView(bannerView)
-                        container.removeAllViews()
-                        container.addView(
-                            bannerView,
-                            FrameLayout.LayoutParams(
-                                bannerWidthPx,
-                                bannerHeightPx,
-                                Gravity.CENTER
-                            )
-                        )
-                        bannerView.requestLayout()
-                    }
-                }
-            )
+                )
+            }
         }
 
         if (!adsStatus.isBannerReady && adsStatus.showBannerFallbackText) {

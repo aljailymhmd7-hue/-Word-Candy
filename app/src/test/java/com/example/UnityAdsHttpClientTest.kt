@@ -196,4 +196,20 @@ class UnityAdsHttpClientTest {
         assertTrue(bannerBounds.top >= playButtonBounds.bottom - 0.5.dp)
         composeRule.onNodeWithText("Advertisement").assertIsDisplayed()
     }
+
+    @Test
+    fun `ensureBannerLaidOut measures and lays out async child view to banner dimensions`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val parent = android.widget.RelativeLayout(context)
+        val child = View(context)
+        parent.addView(child)
+
+        UnityAdsManager.ensureBannerLaidOut(parent, targetWidthPx = 960, targetHeightPx = 150)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper()
+
+        assertEquals(960, parent.measuredWidth)
+        assertEquals(150, parent.measuredHeight)
+        assertEquals(960, child.width)
+        assertEquals(150, child.height)
+    }
 }
